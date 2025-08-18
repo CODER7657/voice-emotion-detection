@@ -1,0 +1,8 @@
+tensorflow
+librosa
+sounddevice
+scipy
+pandas
+scikit-learn
+joblib
+matplotlib
