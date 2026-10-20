@@ -33,9 +33,9 @@ def actor_folds(manifest: pd.DataFrame, n_folds: int = 6, seed: int = 0) -> list
     fold_of: dict[int, int] = {}
     slot = 0
     for _, group in actors.groupby("gender", sort=True):
-        ids = group["actor"].to_numpy()
-        rng.shuffle(ids)
-        for actor in ids:
+        # permutation shuffles a copy: with copy-on-write pandas, to_numpy() can return
+        # a read-only view. Same order as shuffling in place with the same generator.
+        for actor in rng.permutation(group["actor"].to_numpy()):
             fold_of[int(actor)] = slot % n_folds
             slot += 1
 
