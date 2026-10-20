@@ -93,7 +93,7 @@ def main() -> None:
                 print(f"[{task}] {name:13s} {protocol:6s} macro-F1 {f1:.3f}  ({time.time() - t:.0f}s)", flush=True)
                 save(rows, out)
 
-    print("\n" + (out / "results.md").read_text())
+    print("\n" + (out / "results.md").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

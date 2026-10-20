@@ -181,5 +181,5 @@ def to_markdown(rows: list[dict]) -> str:
 
 def save(rows: list[dict], out: Path) -> None:
     out.mkdir(parents=True, exist_ok=True)
-    (out / "results.json").write_text(json.dumps(rows, indent=2))
-    (out / "results.md").write_text(to_markdown(rows))
+    (out / "results.json").write_text(json.dumps(rows, indent=2), encoding="utf-8")
+    (out / "results.md").write_text(to_markdown(rows), encoding="utf-8")
