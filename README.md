@@ -1,5 +1,9 @@
 # Speech Emotion Recognition, Evaluated Honestly
 
+[![tests](https://github.com/CODER7657/voice-emotion-detection/actions/workflows/tests.yml/badge.svg)](https://github.com/CODER7657/voice-emotion-detection/actions/workflows/tests.yml)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/CODER7657/voice-emotion-detection/blob/main/notebooks/train_colab.ipynb)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Recognizes 8 emotions from short speech clips (RAVDESS), and measures how much the
 first version of this project overstated its own accuracy.
 
@@ -47,7 +51,8 @@ the actors each fold tested, and the confusion matrices.
 
 **Where the best model still fails.** WavLM's weakest emotion is *sad* (recall 0.58),
 mostly confused with *calm* and *fearful*. The original CNN under honest testing
-barely recognizes *happy* (0.22) or *neutral* (0.20).
+barely recognizes *happy* (0.22) or *neutral* (0.20). The
+[model card](MODEL_CARD.md) has per-emotion recall, intended use and what is out of scope.
 
 ![Confusion matrix, WavLM on 8 emotions](results/confusion_all8_wavlm_linear.png)
 
@@ -76,13 +81,14 @@ models            ->  majority floor | logistic regression | original CNN | WavL
 
 Training runs on a free Colab GPU, about 25 minutes:
 
-1. Open [`notebooks/train_colab.ipynb`](https://colab.research.google.com/github/CODER7657/voice-emotion-detection/blob/feat/honest-eval-8-emotions/notebooks/train_colab.ipynb) in Colab
+1. Open [`notebooks/train_colab.ipynb`](https://colab.research.google.com/github/CODER7657/voice-emotion-detection/blob/main/notebooks/train_colab.ipynb) in Colab
 2. Runtime → Change runtime type → T4 GPU
 3. Runtime → Run all
 
 The notebook downloads RAVDESS speech (about 200 MB) onto the Colab machine only.
 
-Locally, the tests need no audio data or GPU and finish in seconds:
+Locally, the tests need no audio data or GPU and finish in seconds. CI runs them on
+Python 3.11 and 3.12 for every push and pull request:
 
 ```bash
 pip install -e ".[dev]"
