@@ -28,6 +28,24 @@ def load_clip(path: str, sr: int = SAMPLE_RATE) -> np.ndarray:
     return fix_length(y.astype(np.float32), int(sr * DURATION_S))
 
 
+def load_trimmed(path: str, sr: int = SAMPLE_RATE, top_db: float = 30.0) -> np.ndarray:
+    """Trim leading and trailing silence by energy, then keep 3 s.
+
+    The fixed 0.5 s offset in ``load_clip`` suits RAVDESS, whose clips all open with
+    silence, but cuts speech from datasets and recordings that don't. This loader
+    is used wherever clips from outside RAVDESS are involved: the cross-dataset test
+    and the served model.
+    """
+    y, _ = librosa.load(path, sr=sr)
+    return trim_waveform(y.astype(np.float32), sr, top_db)
+
+
+def trim_waveform(y: np.ndarray, sr: int = SAMPLE_RATE, top_db: float = 30.0) -> np.ndarray:
+    if len(y) and np.abs(y).max() > 0:
+        y, _ = librosa.effects.trim(y, top_db=top_db)
+    return fix_length(y.astype(np.float32), int(sr * DURATION_S))
+
+
 def augment(y: np.ndarray, rng: np.random.Generator, sr: int = SAMPLE_RATE) -> np.ndarray:
     """Light noise always, then pitch shift and time stretch each with p = 0.5.
 

@@ -1,0 +1,12 @@
+{"source": "scripts/cross_dataset.py on Colab T4, 21 Oct 2026 (full output incl. confusion matrices printed in notebooks/cross_dataset_onnx_colab.ipynb)",
+ "clips": {"ravdess": 1056, "cremad": 7442}, "actors": {"ravdess": 24, "cremad": 91},
+ "emotions": ["angry", "disgust", "fearful", "happy", "neutral", "sad"], "loader": "load_trimmed (top_db=30, 3 s)",
+ "macro_f1": {
+  "wavlm_linear": {"ravdess_cv": {"mean": 0.7855, "std": 0.0545}, "cremad_cv": {"mean": 0.7018, "std": 0.0136},
+                   "ravdess_to_cremad": 0.3254, "cremad_to_ravdess": 0.4604},
+  "mfcc_linear": {"ravdess_cv": {"mean": 0.4551, "std": 0.0483}, "cremad_cv": {"mean": 0.4891, "std": 0.0206},
+                  "ravdess_to_cremad": 0.2577, "cremad_to_ravdess": 0.2179},
+  "majority_ravdess_to_cremad": 0.0486},
+ "accuracy": {"wavlm_linear": {"ravdess_to_cremad": 0.3521, "cremad_to_ravdess": 0.5218}},
+ "recall_wavlm_ravdess_to_cremad": {"angry": 0.194, "disgust": 0.264, "fearful": 0.723, "happy": 0.251, "neutral": 0.108, "sad": 0.537},
+ "recall_wavlm_cremad_to_ravdess": {"angry": 0.927, "disgust": 0.552, "fearful": 0.490, "happy": 0.156, "neutral": 0.104, "sad": 0.693}}

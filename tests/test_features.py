@@ -31,3 +31,14 @@ def test_augment_keeps_length_and_is_reproducible():
     assert a.shape == y.shape
     np.testing.assert_array_equal(a, b)
     assert not np.array_equal(a, y)
+
+
+def test_load_trimmed_drops_leading_silence(tmp_path):
+    sr = F.SAMPLE_RATE
+    y = np.concatenate([np.zeros(sr, np.float32), tone(1.0)])  # 1 s of silence, then 1 s of tone
+    path = tmp_path / "late_start.wav"
+    sf.write(path, y, sr)
+    out = F.load_trimmed(str(path))
+    assert out.shape == (int(sr * F.DURATION_S),)
+    assert np.abs(out[: sr // 10]).max() > 0.1  # speech starts right away
+    assert np.abs(out[int(1.2 * sr):]).max() == 0

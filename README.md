@@ -12,7 +12,8 @@ but that evaluation leaked in three ways. With the leaks closed, the same CNN sc
 **0.64**, and on all 8 emotions it drops from 0.72 to **0.43**, no better than a plain
 MFCC baseline. A frozen
 pretrained speech model (WavLM) with a linear classifier on top reaches **0.77** on 8
-emotions under the honest protocol.
+emotions under the honest protocol, but only **0.33** on another dataset's voices
+(CREMA-D), and it runs at 505 ms per clip on a laptop-class CPU as ONNX.
 
 ![Leaky vs speaker-independent macro-F1 on 8 emotions](results/leak_all8.png)
 
@@ -55,6 +56,58 @@ barely recognizes *happy* (0.22) or *neutral* (0.20). The
 [model card](MODEL_CARD.md) has per-emotion recall, intended use and what is out of scope.
 
 ![Confusion matrix, WavLM on 8 emotions](results/confusion_all8_wavlm_linear.png)
+
+## Does it work on other voices?
+
+Speaker-independent folds only test new actors from the same studio. To test new
+recording conditions too, the six emotions RAVDESS shares with
+[CREMA-D](https://github.com/CheyneyComputerScience/CREMA-D) (7,442 clips, 91 actors of
+varied age and ethnicity) were used to train on one corpus and test on the other.
+Both corpora go through the same loader (silence trimmed, then 3 s).
+
+| WavLM + logistic regression, 6 emotions | Macro-F1 |
+|---|---|
+| RAVDESS, speaker-independent folds | 0.786 ± 0.054 |
+| CREMA-D, speaker-independent folds | 0.702 ± 0.014 |
+| **Train RAVDESS, test CREMA-D** | **0.325** |
+| Train CREMA-D, test RAVDESS | 0.460 |
+| Always predicting one emotion | 0.049 |
+
+**A model that scores 0.79 on RAVDESS scores 0.33 on another dataset's voices.** Trained
+on RAVDESS, it labels most CREMA-D clips fearful or sad (neutral recall 0.11, angry
+0.19). Training on CREMA-D's 91 speakers transfers better than RAVDESS's 24, which
+suggests speaker variety matters more than clip count. The MFCC baseline drops to 0.26.
+Numbers: [`results/cross_dataset/summary.json`](results/cross_dataset/summary.json),
+from [`scripts/cross_dataset.py`](scripts/cross_dataset.py).
+
+## Running it on a CPU
+
+[`scripts/export_onnx.py`](scripts/export_onnx.py) exports WavLM (with the pooling)
+to ONNX and checks it against PyTorch on the same 6 speaker-independent folds
+(8 emotions, 1,440 clips, 2 CPU threads, one 3 s clip at a time):
+
+| Embedding backend | Macro-F1 | CPU p50 / p95 | Size |
+|---|---|---|---|
+| PyTorch fp32 | 0.750 ± 0.072 | 578 / 619 ms | |
+| **ONNX fp32 (served)** | **0.749 ± 0.074** | **505 / 546 ms** | 378 MB |
+| ONNX int8, dynamic quantisation | 0.657 ± 0.033 | 1,217 / 1,257 ms | 96 MB |
+
+Dynamic int8 quantisation looked like the obvious step and was a bad trade here: the
+embeddings drifted (cosine 0.62 against PyTorch), macro-F1 fell 9 points, and it ran
+more than twice as slowly on this CPU. The fp32 export matches PyTorch exactly (cosine
+1.00) and is 13% faster, so that is what [`src/vemo/serve.py`](src/vemo/serve.py)
+serves:
+
+```bash
+pip install -e ".[serve,export]"
+python scripts/export_onnx.py --ravdess /path/to/ravdess --out models   # once, about 30 min on CPU
+uvicorn vemo.serve:app --port 8000
+curl -F "file=@clip.wav" localhost:8000/predict
+```
+
+The 378 MB model isn't committed; the export recreates it. Report:
+[`results/export/export_report.json`](results/export/export_report.json). Both runs:
+[`notebooks/cross_dataset_onnx_colab.ipynb`](notebooks/cross_dataset_onnx_colab.ipynb).
 
 ## How it works
 
