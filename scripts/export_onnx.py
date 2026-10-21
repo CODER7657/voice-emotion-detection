@@ -4,11 +4,12 @@
 
 1. WavLM-base-plus, with the same pooling as ``vemo.ssl.embed`` (mean over time,
    then over layers), exported to ONNX for a fixed 3 s input.
-2. A dynamic int8 copy (weights stored as int8; about a quarter of the size).
+2. A dynamic int8 copy, measured for comparison (on 2 CPU threads it was slower and less
+   accurate, so the fp32 model is the one served).
 3. The logistic-regression head, fitted on all 1,440 RAVDESS clips (8 emotions,
    ``load_trimmed``), saved to ``head.json``.
 4. Checks: embedding agreement with PyTorch, speaker-independent macro-F1 using the
-   int8 embeddings against the PyTorch ones (same 6 folds), and CPU latency.
+   ONNX embeddings against the PyTorch ones (same 6 folds), and CPU latency.
 """
 
 from __future__ import annotations
@@ -78,7 +79,8 @@ def main() -> None:
 
     module = pooled_module(DEFAULT_MODEL)
     fp32 = out / "wavlm_pooled_fp32.onnx"
-    int8 = out / ONNX_FILE
+    int8 = out / "wavlm_pooled_int8.onnx"
+    assert fp32.name == ONNX_FILE
     dummy = torch.zeros(1, N)
     kwargs = dict(input_names=["wave"], output_names=["embedding"], opset_version=17)
     try:
@@ -116,10 +118,10 @@ def main() -> None:
         report["honest_cv"][k] = {"macro_f1": r["macro_f1"], "accuracy": r["accuracy"]}
         print(k, "speaker-independent macro-F1", round(r["macro_f1"]["mean"], 3), flush=True)
 
-    # The served head: fitted on all clips, using the int8 embeddings it will see in production.
-    pipe = make_linear(c=0.5).fit(X["onnx_int8"], y)
+    # The served head: fitted on all clips, using the fp32 ONNX embeddings it will see in production.
+    pipe = make_linear(c=0.5).fit(X["onnx_fp32"], y)
     head = head_from_pipeline(pipe)
-    assert np.allclose(head_proba(head, X["onnx_int8"][:50]), pipe.predict_proba(X["onnx_int8"][:50]), atol=1e-6)
+    assert np.allclose(head_proba(head, X["onnx_fp32"][:50]), pipe.predict_proba(X["onnx_fp32"][:50]), atol=1e-6)
     (out / HEAD_FILE).write_text(json.dumps(head), encoding="utf-8")
 
     module_cpu = module.to("cpu")
@@ -128,7 +130,7 @@ def main() -> None:
         report["cpu_latency_3s_clip"]["torch_fp32"] = latency(lambda a: module_cpu(torch.from_numpy(a)), x)
     for k, s in sessions.items():
         report["cpu_latency_3s_clip"][k] = latency(lambda a: s.run(None, {"wave": a}), x)
-    report["sha256"] = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in (int8, out / HEAD_FILE)}
+    report["sha256"] = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in (fp32, out / HEAD_FILE)}
     (out / "export_report.json").write_text(json.dumps(report, indent=1), encoding="utf-8")
     print("<<<EXPORT_REPORT>>>")
     print(json.dumps(report, separators=(",", ":")))

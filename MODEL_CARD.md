@@ -44,6 +44,15 @@ actor in both train and test. The 0.11 gap is how much speaker leakage inflates 
 
 Source: `results/compact.json`, one Colab T4 run, seed 0.
 
+**On another dataset.** Trained on RAVDESS and tested on CREMA-D (91 different actors,
+six shared emotions), macro-F1 is **0.325**, against 0.786 for speaker-independent folds
+inside RAVDESS with the same loader. Source: `results/cross_dataset/summary.json`.
+
+**As served.** The served model runs WavLM as fp32 ONNX (macro-F1 0.749 ± 0.074 under the
+same folds with the silence-trimming loader, 505 ms p50 per 3 s clip on 2 CPU threads)
+and a head fitted on all 1,440 clips. An int8 copy was rejected (0.657, and slower).
+Source: `results/export/export_report.json`.
+
 ## Intended use
 
 Learning and research on speech emotion recognition, and as an honest baseline to
@@ -57,9 +66,10 @@ compare other models against.
 
 ## Limitations
 
-- **Acted, scripted speech.** 24 North American actors reading two sentences. Accuracy
-  on spontaneous speech, other languages and accents, children, or noisy phone audio
-  has not been measured and should be expected to be lower.
+- **Acted, scripted speech.** 24 North American actors reading two sentences. On
+  another acted English dataset (CREMA-D) macro-F1 falls from 0.79 to 0.33, so on
+  spontaneous speech, other languages and accents, children, or noisy phone audio it
+  should be expected to be lower still. Do not use it outside research.
 - **Not measured by gender.** Folds are gender-balanced, but scores were not broken
   down by speaker gender.
 - **Small test folds.** With 4 voices per fold, scores move by about ±0.05 depending on

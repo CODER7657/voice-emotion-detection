@@ -1,12 +1,13 @@
 """Serve the WavLM + logistic-regression model over HTTP, on CPU, without PyTorch.
 
     pip install -e ".[serve]"
-    python scripts/get_model.py                  # downloads models/ from the GitHub release
+    python scripts/export_onnx.py --ravdess <RAVDESS dir> --out models   # once; writes models/
     uvicorn vemo.serve:app --port 8000
     curl -F "file=@clip.wav" localhost:8000/predict
 
-The embedding model is WavLM-base-plus exported to ONNX with int8 weights
-(``scripts/export_onnx.py``); the classifier is a standardised logistic regression
+The embedding model is WavLM-base-plus exported to ONNX in fp32 (``scripts/export_onnx.py``).
+An int8 copy was measured and rejected: it lost 9 points of macro-F1 and ran slower on CPU
+(``results/export/export_report.json``). The classifier is a standardised logistic regression
 stored as plain numbers in ``head.json``. Clips are trimmed of silence and cut or
 padded to 3 s, as in training (``features.load_trimmed``).
 """
@@ -21,7 +22,7 @@ from pathlib import Path
 import numpy as np
 
 MODEL_DIR = Path(os.getenv("VEMO_MODEL_DIR", Path(__file__).resolve().parents[2] / "models"))
-ONNX_FILE = "wavlm_pooled_int8.onnx"
+ONNX_FILE = "wavlm_pooled_fp32.onnx"
 HEAD_FILE = "head.json"
 MAX_BYTES = 10 * 1024 * 1024
 
