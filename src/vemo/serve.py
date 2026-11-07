@@ -5,7 +5,8 @@
     uvicorn vemo.serve:app --port 8000
     curl -F "file=@clip.wav" localhost:8000/predict
 
-The embedding model is WavLM-base-plus exported to ONNX in fp32 (``scripts/export_onnx.py``).
+The embedding model is WavLM-base-plus exported to ONNX (``scripts/export_onnx.py``), stored
+with fp16 weights that ``vemo.weights`` upcasts to fp32 at load, so compute is fp32.
 An int8 copy was measured and rejected: it lost 9 points of macro-F1 and ran slower on CPU
 (``results/export/export_report.json``). The classifier is a standardised logistic regression
 stored as plain numbers in ``head.json``. Clips are trimmed of silence and cut or
@@ -22,7 +23,9 @@ from pathlib import Path
 import numpy as np
 
 MODEL_DIR = Path(os.getenv("VEMO_MODEL_DIR", Path(__file__).resolve().parents[2] / "models"))
-ONNX_FILE = "wavlm_pooled_fp32.onnx"
+ONNX_FILE = "wavlm_pooled_fp16w.onnx"
+#: The fp32 export, still accepted so a local models/ from before fp16 storage works.
+ONNX_FP32_FILE = "wavlm_pooled_fp32.onnx"
 HEAD_FILE = "head.json"
 MAX_BYTES = 10 * 1024 * 1024
 
@@ -43,12 +46,22 @@ def head_proba(head: dict, X: np.ndarray) -> np.ndarray:
     return p / p.sum(axis=1, keepdims=True)
 
 
+def onnx_path(model_dir: Path = MODEL_DIR) -> Path:
+    """The fp16-stored model if present, else the fp32 export."""
+    preferred = model_dir / ONNX_FILE
+    return preferred if preferred.exists() else model_dir / ONNX_FP32_FILE
+
+
 class Model:
     def __init__(self, model_dir: Path = MODEL_DIR):
         import onnxruntime as ort
 
         self.head = json.loads((model_dir / HEAD_FILE).read_text(encoding="utf-8"))
-        self.session = ort.InferenceSession(str(model_dir / ONNX_FILE), providers=["CPUExecutionProvider"])
+        from vemo.weights import load_model_bytes
+
+        self.session = ort.InferenceSession(
+            load_model_bytes(onnx_path(model_dir)), providers=["CPUExecutionProvider"]
+        )
         self.input = self.session.get_inputs()[0].name
 
     def embed(self, wave: np.ndarray) -> np.ndarray:
@@ -75,7 +88,7 @@ def create_app():
 
     @app.get("/health")
     def health():
-        ready = (MODEL_DIR / ONNX_FILE).exists() and (MODEL_DIR / HEAD_FILE).exists()
+        ready = onnx_path().exists() and (MODEL_DIR / HEAD_FILE).exists()
         return {"ready": ready, "model_dir": str(MODEL_DIR)}
 
     @app.post("/predict")
