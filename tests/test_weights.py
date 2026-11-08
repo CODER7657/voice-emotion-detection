@@ -185,8 +185,9 @@ def test_to_fp16_script_converts_and_writes_the_release_checksum(tmp_path):
     src = _write_model(tmp_path / "fp32.onnx")
     dst = tmp_path / "fp16w.onnx"
     assert _to_fp16_main()(["--src", str(src), "--dst", str(dst)]) == 0
-    line = (tmp_path / "SHA256SUMS.fp16w").read_text(encoding="utf-8")
-    assert line == f"{weights.sha256_file(dst)}  fp16w.onnx\n"
+    raw = (tmp_path / "SHA256SUMS.fp16w").read_bytes()
+    assert b"\r" not in raw, "sha256sum -c reads a CRLF line as a filename ending in \\r"
+    assert raw.decode("utf-8") == f"{weights.sha256_file(dst)}  fp16w.onnx\n"
     x = np.random.default_rng(5).normal(size=(1, 256)).astype(np.float32)
     assert _cosine(_run(weights.load_model_bytes(dst), x), _run(weights.load_model_bytes(src), x)) >= 0.999
 
