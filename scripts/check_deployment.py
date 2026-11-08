@@ -1,4 +1,4 @@
-"""Post-deploy health check of the live API: /health, then /ready.
+"""Post-deploy health check of the live API and site: /health, /ready, then /.
 
     python scripts/check_deployment.py [--url https://<prod>] [--deploy-log vercel.log] \
         [--deploy-url https://<deployment>] [--attempts 12] [--interval 10]
@@ -40,6 +40,9 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 _OPENER = urllib.request.build_opener(_NoRedirect)
 
+#: The API, then the site served from the same origin (web/dist in public/).
+PATHS = ("/health", "/ready", "/")
+
 
 def production_url(log_text: str) -> str | None:
     """The first production alias in a ``vercel deploy --prod`` log, if any."""
@@ -70,7 +73,7 @@ def status_of(url: str, timeout: float) -> int:
 
 def check(base: str, attempts: int = 12, interval: float = 10, timeout: float = 60,
           probe=status_of, sleep=time.sleep, out=print) -> int:
-    for path in ("/health", "/ready"):
+    for path in PATHS:
         code = 0
         for attempt in range(1, attempts + 1):
             code = probe(base + path, timeout)
@@ -88,7 +91,7 @@ def check(base: str, attempts: int = 12, interval: float = 10, timeout: float = 
         out(f"::error title=health check failed::{base}{path} answered {code or 'timeout'} "
             f"after {attempts} attempts")
         return 1
-    out(f"{base}: /health and /ready are 200")
+    out(f"{base}: {', '.join(PATHS)} are 200")
     return 0
 
 

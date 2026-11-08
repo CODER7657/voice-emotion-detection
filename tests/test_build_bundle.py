@@ -300,3 +300,34 @@ def test_fetch_network_error_propagates_and_cleans_up(tmp_path):
     with pytest.raises(OSError):
         vfm.fetch(URL, "0" * 64, dest, opener=boom)
     assert not dest.with_suffix(".part").exists()
+
+
+def test_web_dist_is_served_from_public_with_the_security_headers(tmp_path, standin):
+    site = tmp_path / "dist"
+    (site / "assets").mkdir(parents=True)
+    (site / "index.html").write_text("<!doctype html><title>t</title>")
+    (site / "assets" / "app.js").write_text("console.log(1)")
+    out = bvb.build(standin, tmp_path / "bundle", web_dist=site)
+    assert (out / "public" / "index.html").is_file()
+    assert (out / "public" / "assets" / "app.js").is_file()
+    cfg = json.loads((out / "vercel.json").read_text())
+    [rule] = cfg["headers"]
+    assert rule["source"] == "/(.*)"
+    served = {h["key"]: h["value"] for h in rule["headers"]}
+    policy = json.loads(bvb.WEB_HEADERS.read_text(encoding="utf-8"))
+    assert served == policy
+    csp = served["Content-Security-Policy"]
+    assert "script-src 'self'" in csp and "frame-ancestors 'none'" in csp and "unsafe-inline" not in csp
+    assert served["Permissions-Policy"].startswith("microphone=(self)")
+
+
+def test_without_web_dist_there_is_no_public_dir_or_headers(tmp_path, standin):
+    out = bvb.build(standin, tmp_path / "bundle")
+    assert not (out / "public").exists()
+    assert "headers" not in json.loads((out / "vercel.json").read_text())
+
+
+def test_web_dist_without_an_index_is_refused(tmp_path, standin):
+    (tmp_path / "dist").mkdir()
+    with pytest.raises(FileNotFoundError, match="index.html"):
+        bvb.build(standin, tmp_path / "bundle", web_dist=tmp_path / "dist")

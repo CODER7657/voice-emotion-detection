@@ -54,13 +54,19 @@ def run(codes_by_path, attempts=3):
     return rc, calls, "\n".join(lines)
 
 
-def test_both_200_passes():
-    rc, calls, _ = run({"/health": [200], "/ready": [200]})
-    assert rc == 0 and calls == ["/health", "/ready"]
+def test_all_200_passes():
+    rc, calls, _ = run({"/health": [200], "/ready": [200], "/": [200]})
+    assert rc == 0 and calls == ["/health", "/ready", "/"]
+
+
+def test_a_missing_site_fails_the_deploy():
+    """The API alone is not a working deploy: the page must be served too."""
+    rc, calls, text = run({"/health": [200], "/ready": [200], "/": [404]})
+    assert rc == 1 and calls.count("/") == 3 and "::error" in text
 
 
 def test_ready_503_then_200_passes_after_retry():
-    rc, calls, _ = run({"/health": [200], "/ready": [503, 0, 200]})
+    rc, calls, _ = run({"/health": [200], "/ready": [503, 0, 200], "/": [200]})
     assert rc == 0 and calls.count("/ready") == 3
 
 
@@ -117,7 +123,7 @@ def test_real_http_status_codes(server):
     assert cd.status_of(base + "/health", 5) == 200
     assert cd.status_of(base + "/ready", 5) == 503
     assert cd.check(base, attempts=2, interval=0, out=lambda s: None) == 1
-    _Handler.codes = {"/health": 200, "/ready": 200}
+    _Handler.codes = {"/health": 200, "/ready": 200, "/": 200}
     assert cd.check(base, attempts=2, interval=0, out=lambda s: None) == 0
     _Handler.codes = {"/health": 401}
     assert cd.check(base, attempts=2, interval=0, out=lambda s: None) == 0

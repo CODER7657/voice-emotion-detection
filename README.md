@@ -115,9 +115,39 @@ Neither model is committed; the export recreates them, and the fp16 copy is publ
 [`results/export/export_report.json`](results/export/export_report.json). Both runs:
 [`notebooks/cross_dataset_onnx_colab.ipynb`](notebooks/cross_dataset_onnx_colab.ipynb).
 
+### Web app
+
+**Try it: <https://vemo-api.vercel.app>.** Record three seconds (or choose a file) and
+eight glows, one per emotion, light up with the model's probabilities.
+
+| 375 px | 1280 px |
+|---|---|
+| <img src="docs/screens/web-mobile-375-result.webp" alt="Phone: the result, CALM 58%, with eight probability bars over a violet glow" width="260"> | <img src="docs/screens/web-desktop-1280-result.webp" alt="Desktop: wide EMOTION title, record button and the result over the glow field" width="520"> |
+
+[`web/`](web) is a small Vite + TypeScript site (4.8 kB of JavaScript gzipped, no
+framework) in the Aurora style: tokens in [`web/src/tokens.css`](web/src/tokens.css),
+self-hosted Syne and Space Grotesk, Lucide icons, `prefers-reduced-motion` respected.
+It prepares audio the way the model was trained: decode, mono, resample to 16 kHz
+(`OfflineAudioContext`, or a Kaiser-windowed sinc where a 16 kHz context is refused),
+trim silence with a TypeScript port of the trim that is checked against
+[`src/vemo/trim.py`](src/vemo/trim.py) on shared fixtures, then exactly 3 s. In the
+browser end to end test the request body correlates above 0.99 with what
+`librosa.load` + `vemo.trim` make of the same file. It is served from the same origin
+as the API (Vercel's CDN, `public/`), so there is no CORS, under a strict CSP with no
+inline script or style ([`web/security-headers.json`](web/security-headers.json)).
+
+Checks ([`.github/workflows/web.yml`](.github/workflows/web.yml)): ESLint (strict, type
+checked), Prettier, `tsc`, 37 Vitest unit tests, and Playwright at 375, 768 and 1280 px
+in Chromium (with a fake microphone playing a synthetic clip, so the record path runs)
+and WebKit as an iPhone, with axe (zero serious or critical issues). Lighthouse mobile on
+the deployed site (2026-11-08, median of 3): performance 100, accessibility 100, best
+practices 100, SEO 100; LCP 1.2 s, CLS 0. iOS Safari itself has not been tested on a
+device; WebKit is the stand-in. `VEMO_LIVE_URL=https://vemo-api.vercel.app npx playwright
+test live` (in `web/`) runs the real model through the real page.
+
 ### Live API
 
-`api/index.py` serves the same model as a Vercel Python function at `<live URL>`.
+`api/index.py` serves the same model as a Vercel Python function at <https://vemo-api.vercel.app>.
 There is no audio decoding on the server: the browser records, resamples to 16 kHz
 mono and sends exactly 3 s as raw samples. The server trims silence (the NumPy port in
 `vemo.trim`), runs the fp16-stored WavLM (upcast to fp32) and the logistic-regression
@@ -136,7 +166,7 @@ head. The function depends only on numpy, onnx, onnxruntime and fastapi
 # make a 3 s, 16 kHz mono float32 file from any clip (needs librosa locally, not on the server)
 python -c "import librosa, numpy as np; y,_ = librosa.load('clip.wav', sr=16000, mono=True); \
 y = np.pad(y[:48000], (0, max(0, 48000 - len(y)))); y.astype('<f4').tofile('clip.f32')"
-curl -s -X POST --data-binary @clip.f32 -H 'Content-Type: application/octet-stream' '<live URL>/predict'
+curl -s -X POST --data-binary @clip.f32 -H 'Content-Type: application/octet-stream' 'https://vemo-api.vercel.app/predict'
 ```
 
 ```json

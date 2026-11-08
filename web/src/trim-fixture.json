@@ -1,0 +1,47 @@
+{
+  "speech_between_silences": {
+    "segments": [
+      [8000, 0, 0],
+      [24000, 0.5, 220],
+      [6000, 0, 0]
+    ],
+    "bounds": [7168, 33280]
+  },
+  "quiet_lead_in": {
+    "segments": [
+      [5000, 0.001, 100],
+      [20000, 0.4, 330],
+      [3000, 0, 0]
+    ],
+    "bounds": [4096, 26112]
+  },
+  "two_bursts_with_a_gap": {
+    "segments": [
+      [4000, 0, 0],
+      [6000, 0.3, 440],
+      [8000, 0, 0],
+      [6000, 0.6, 180]
+    ],
+    "bounds": [3072, 24000]
+  },
+  "longer_than_three_seconds": {
+    "segments": [
+      [2000, 0, 0],
+      [60000, 0.2, 250],
+      [2000, 0, 0]
+    ],
+    "bounds": [1024, 63488]
+  },
+  "all_loud": {
+    "segments": [[30000, 0.5, 200]],
+    "bounds": [0, 30000]
+  },
+  "silence": {
+    "segments": [[16000, 0, 0]],
+    "bounds": [0, 16000]
+  },
+  "shorter_than_a_frame": {
+    "segments": [[1000, 0.5, 300]],
+    "bounds": [0, 1000]
+  }
+}

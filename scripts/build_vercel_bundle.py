@@ -25,6 +25,7 @@ Layout (mirrors the repo, so api/index.py finds vemo and models/ the same way):
     pyproject.toml               the ONLY dependency source (pins from api/requirements.txt),
                                  Python 3.12, tool.vercel.entrypoint = api.index:app
     .python-version, vercel.json, .vemo-bundle (marker: safe to delete on rebuild)
+    public/                      --web-dist only: the built site, same origin as the API
 
 No requirements.txt is emitted: Vercel's Python builder installs from the native
 pyproject.toml when one exists and only converts requirements.txt when it does
@@ -61,10 +62,13 @@ MAX_DURATION_S = 60  # cold start (load + upcast 190 MB) plus one inference; Hob
 NL = "\n"
 
 
-def vercel_config(region: str) -> dict:
+WEB_HEADERS = ROOT / "web" / "security-headers.json"
+
+
+def vercel_config(region: str, headers: dict[str, str] | None = None) -> dict:
     # Memory is not set here: with Fluid compute it is a dashboard setting, and the
     # Hobby default (2 GB / 1 vCPU) is already the Hobby maximum.
-    return {
+    cfg: dict = {
         "$schema": "https://openapi.vercel.sh/vercel.json",
         # Without this the project's dashboard preset decides; "Other" (the default for a
         # CLI-created project) builds a static site with no function and every path 404s.
@@ -77,6 +81,11 @@ def vercel_config(region: str) -> dict:
             }
         },
     }
+    if headers:
+        # One policy for the site (public/, served by Vercel's CDN) and the API responses.
+        cfg["headers"] = [{"source": "/(.*)",
+                           "headers": [{"key": k, "value": v} for k, v in headers.items()]}]
+    return cfg
 
 
 def pyproject(requirements: list[str], fetch: bool = False) -> str:
@@ -138,8 +147,11 @@ def _write(path: Path, text: str) -> None:
 
 
 def build(model: Path, out: Path, sha256: str | None = None, region: str = "bom1",
-          head: Path = ROOT / "models" / "head.json", fetch_url: str | None = None) -> Path:
+          head: Path = ROOT / "models" / "head.json", fetch_url: str | None = None,
+          web_dist: Path | None = None) -> Path:
     model, head, out = Path(model), Path(head), Path(out)
+    if web_dist is not None and not (Path(web_dist) / "index.html").is_file():
+        raise FileNotFoundError(f"no index.html in {web_dist} (run `npm run build` in web/)")
     if not head.is_file():
         raise FileNotFoundError(f"head not found: {head}")
     if not model.is_file():
@@ -174,7 +186,12 @@ def build(model: Path, out: Path, sha256: str | None = None, region: str = "bom1
             if ln.strip() and not ln.lstrip().startswith("#")]
     _write(out / "pyproject.toml", pyproject(reqs, fetch=bool(fetch_url)))
     _write(out / ".python-version", "3.12\n")
-    _write(out / "vercel.json", json.dumps(vercel_config(region), indent=2) + NL)
+    headers = None
+    if web_dist is not None:
+        # The site is served from the same origin as the API: no CORS, one deploy.
+        shutil.copytree(web_dist, out / "public")
+        headers = json.loads(WEB_HEADERS.read_text(encoding="utf-8"))
+    _write(out / "vercel.json", json.dumps(vercel_config(region, headers), indent=2) + NL)
     _write(out / MARKER, "Created by scripts/build_vercel_bundle.py; rebuilt (deleted) on each run." + NL)
     return out
 
@@ -188,11 +205,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--region", default="bom1")
     ap.add_argument("--fetch-url", help="download the model at Vercel build time from this https URL "
                                         "instead of uploading it (Hobby caps CLI uploads at 100 MB)")
+    ap.add_argument("--web-dist", type=Path, help="built site (web/dist) to serve from public/ with "
+                                                  "web/security-headers.json")
     ap.add_argument("--measure-deps", action="store_true",
                     help="also install the pinned requirements (py3.12 manylinux) to measure them")
     args = ap.parse_args(argv)
 
-    out = build(args.model, args.out, args.sha256, args.region, args.head, args.fetch_url)
+    out = build(args.model, args.out, args.sha256, args.region, args.head, args.fetch_url, args.web_dist)
     bundle = dir_size(out)
     print(f"bundle (uploaded): {out} = {bundle / 1e6:.1f} MB")
     total = bundle

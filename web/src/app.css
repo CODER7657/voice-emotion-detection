@@ -1,0 +1,405 @@
+@import "./tokens.css";
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 100%;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  overflow-x: hidden;
+  font-size: var(--step-0);
+  line-height: 1.5;
+}
+
+a {
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 4px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* --- the glow field: one blurred glow per emotion, intensity = probability ---------- */
+
+/* Clipped to the viewport: a fixed element past the edge still widens the page, and
+   iOS then lets the visitor pan sideways. */
+.glow-clip {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.glows {
+  position: absolute;
+  inset: 38% -15% -25%;
+  filter: blur(var(--glow-blur)) saturate(1.25);
+}
+
+.glow {
+  position: absolute;
+  left: var(--x);
+  top: var(--y);
+  width: var(--size, 34vmax);
+  aspect-ratio: 1;
+  translate: -50% -50%;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--c1) 0%, var(--c2) 42%, transparent 70%);
+  /* additive light: overlapping glows bloom instead of mixing to brown */
+  mix-blend-mode: screen;
+  opacity: var(--level, 0.45);
+  scale: calc(0.75 + var(--level, 0.45) * 0.5);
+  transition:
+    opacity 1.1s var(--ease),
+    scale 1.1s var(--ease);
+  animation: drift var(--period, 18s) ease-in-out infinite alternate;
+}
+
+@keyframes drift {
+  to {
+    transform: translate(var(--dx, 3vw), var(--dy, -2vh));
+  }
+}
+
+[data-state="recording"] .glow,
+[data-state="analysing"] .glow {
+  /* breathing while it listens; levels stay ambient until there is a result */
+  animation-duration: 6s;
+}
+
+.grain {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: var(--grain-opacity);
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* --- the axis-centred micro layout ------------------------------------------------- */
+
+.page {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: min(100% - 2 * var(--space-2), 46rem);
+  min-height: 100dvh;
+  margin-inline: auto;
+  padding-block: max(var(--space-2), env(safe-area-inset-top)) var(--space-3);
+  text-align: center;
+}
+
+.meta-row {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  padding-bottom: var(--space-1);
+  border-bottom: 1px solid var(--rule);
+  font-size: var(--step--2);
+  font-style: italic;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+
+.title {
+  margin: var(--space-4) 0 0;
+  font-family: var(--font-display);
+  font-size: var(--step-5);
+  font-weight: 800;
+  line-height: 0.9;
+  letter-spacing: -0.02em;
+  text-transform: uppercase;
+  /* the slight glow of the reference title, kept sharp enough to read */
+  text-shadow:
+    0 0 18px rgb(255 241 224 / 35%),
+    0 0 2px rgb(255 241 224 / 60%);
+}
+
+.lede {
+  max-width: 26rem;
+  margin: var(--space-2) 0 0;
+  font-size: var(--step--1);
+  color: var(--text-dim);
+}
+
+.axis {
+  width: 1px;
+  height: clamp(1.5rem, 6vh, 3.5rem);
+  margin-block: var(--space-3) var(--space-2);
+  background: var(--rule);
+}
+
+.capture {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.record {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: clamp(104px, 28vw, 128px);
+  aspect-ratio: 1;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgb(10 10 12 / 55%);
+  color: var(--text);
+  cursor: pointer;
+  transition: transform 0.3s var(--ease);
+}
+
+.record:hover {
+  transform: scale(1.04);
+}
+
+.record:active {
+  transform: scale(0.97);
+}
+
+.record:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.ring {
+  position: absolute;
+  inset: 0;
+  rotate: -90deg;
+}
+
+.ring circle {
+  fill: none;
+  stroke-width: 1.5;
+}
+
+.ring-track {
+  stroke: var(--text);
+  opacity: 0.55;
+}
+
+.ring-progress {
+  stroke: var(--magenta);
+  stroke-width: 3;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+}
+
+[data-state="recording"] .ring-progress {
+  animation: fill var(--record-s, 3.5s) linear forwards;
+}
+
+@keyframes fill {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.record-icon svg {
+  width: 34px;
+  height: 34px;
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--step--2);
+  font-style: italic;
+  color: var(--text-dim);
+}
+
+.file {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  min-height: var(--target);
+  padding-inline: var(--space-2);
+  border-bottom: 1px solid var(--rule);
+  font-size: var(--step--1);
+  cursor: pointer;
+}
+
+.file:hover,
+.file:focus-within {
+  border-color: var(--text);
+}
+
+.file:focus-within {
+  outline: 2px solid var(--cyan);
+  outline-offset: 4px;
+}
+
+.file-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* The result is shown below; the sentence stays for screen readers only. */
+[data-state="done"] .status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.status {
+  min-height: 1.5em;
+  margin: 0;
+  font-size: var(--step--1);
+  letter-spacing: 0.02em;
+}
+
+/* --- the result -------------------------------------------------------------------- */
+
+.result {
+  width: 100%;
+  max-width: 22rem;
+  margin-top: var(--space-3);
+}
+
+.kicker {
+  margin: 0;
+  font-size: var(--step--2);
+  font-style: italic;
+  color: var(--text-dim);
+}
+
+.verdict {
+  margin: 0.1em 0 var(--space-2);
+  font-family: var(--font-display);
+  font-size: var(--step-2);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+}
+
+.bars {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.bar {
+  display: grid;
+  grid-template-columns: 6.5rem 1fr 3rem;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--step--2);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.bar-name {
+  text-align: left;
+}
+
+.bar-value {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.bar-track {
+  height: 1px;
+  background: var(--rule);
+}
+
+.bar-fill {
+  height: 3px;
+  margin-top: -1px;
+  width: calc(var(--p) * 100%);
+  background: var(--text);
+  transition: width 0.9s var(--ease);
+}
+
+.bar[data-top] {
+  font-weight: 500;
+}
+
+.timing {
+  margin: var(--space-1) 0 0;
+  font-size: var(--step--2);
+  color: var(--text-dim);
+}
+
+/* --- footer ------------------------------------------------------------------------ */
+
+.foot {
+  margin-top: auto;
+  padding-top: var(--space-5);
+  font-size: var(--step--2);
+  /* glows sit behind the footer: a soft dark halo keeps small text readable on them */
+  text-shadow:
+    0 0 10px var(--bg),
+    0 0 3px var(--bg);
+}
+
+.foot p {
+  margin: 0 0 0.25rem;
+}
+
+.disclaimer {
+  font-style: italic;
+}
+
+.links {
+  display: flex;
+  justify-content: center;
+  gap: var(--space-1);
+}
+
+.links a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--target);
+  padding-inline: 0.5rem;
+  text-underline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glow,
+  [data-state="recording"] .glow {
+    animation: none;
+    transition: none;
+  }
+
+  .record,
+  .bar-fill {
+    transition: none;
+  }
+
+  [data-state="recording"] .ring-progress {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+}
