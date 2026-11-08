@@ -37,7 +37,10 @@ def main(argv: list[str] | None = None) -> int:
 
     report = store_fp16(args.src, args.dst)
     digest = sha256_file(args.dst)
-    (args.dst.parent / "SHA256SUMS.fp16w").write_text(f"{digest}  {args.dst.name}\n", encoding="utf-8")
+    # LF even on Windows: `sha256sum -c` reads a CRLF line as a filename ending in "\r".
+    (args.dst.parent / "SHA256SUMS.fp16w").write_text(
+        f"{digest}  {args.dst.name}\n", encoding="utf-8", newline="\n"
+    )
     print(f"{report['converted']} initializers -> fp16; {report['src_mb']} MB -> {report['dst_mb']} MB")
     print(f"sha256 {digest}  {args.dst.name}")
     return 0
