@@ -66,6 +66,9 @@ def vercel_config(region: str) -> dict:
     # Hobby default (2 GB / 1 vCPU) is already the Hobby maximum.
     return {
         "$schema": "https://openapi.vercel.sh/vercel.json",
+        # Without this the project's dashboard preset decides; "Other" (the default for a
+        # CLI-created project) builds a static site with no function and every path 404s.
+        "framework": "fastapi",
         "regions": [region],
         "functions": {
             "api/index.py": {

@@ -34,6 +34,7 @@ def test_bundle_layout_and_config(tmp_path, standin):
     ]
     cfg = json.loads((out / "vercel.json").read_text())
     assert cfg["regions"] == ["iad1"]
+    assert cfg["framework"] == "fastapi"  # else the preset can make it a static site (all 404)
     fn = cfg["functions"]["api/index.py"]
     assert 10 <= fn["maxDuration"] <= 300 and "models/**" in fn["includeFiles"]
     assert "memory" not in fn  # not settable in vercel.json under Fluid compute

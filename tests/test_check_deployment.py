@@ -24,6 +24,8 @@ Aliased: https://vemo-api.vercel.app [41s]
 
 def test_production_alias_is_parsed():
     assert cd.production_url(DEPLOY_LOG) == "https://vemo-api.vercel.app"
+    # Vercel CLI 58 (seen in the first real deploy): no colon, padded with spaces
+    assert cd.production_url("\u25b2 Aliased         https://vemo-api.vercel.app\n") == "https://vemo-api.vercel.app"
     assert cd.production_url("no alias here") is None
 
 
@@ -89,7 +91,10 @@ class _Handler(BaseHTTPRequestHandler):
     codes: dict = {}
 
     def do_GET(self):  # noqa: N802
-        self.send_response(self.codes.get(self.path, 404))
+        code = self.codes.get(self.path, 404)
+        self.send_response(code)
+        if code == 302:  # what Deployment Protection does: off to an SSO page that answers 200
+            self.send_header("Location", "/login")
         self.end_headers()
         self.wfile.write(b"{}")
 
@@ -116,6 +121,14 @@ def test_real_http_status_codes(server):
     assert cd.check(base, attempts=2, interval=0, out=lambda s: None) == 0
     _Handler.codes = {"/health": 401}
     assert cd.check(base, attempts=2, interval=0, out=lambda s: None) == 0
+
+
+def test_a_redirect_is_not_followed_to_a_200_login_page(server):
+    """The first real deploy passed this check on Vercel's SSO login page."""
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    _Handler.codes = {"/health": 302, "/ready": 302, "/login": 200}
+    assert cd.status_of(base + "/health", 5) == 302
+    assert cd.check(base, attempts=2, interval=0, out=lambda s: None) == 1
 
 
 def test_connection_refused_is_a_timeout_status():

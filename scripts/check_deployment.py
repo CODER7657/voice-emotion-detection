@@ -10,7 +10,7 @@ Protection, so:
 
 * 200            ok
 * 401 / 403      protected: cannot verify -> GitHub ``::warning::``, exit 0
-* anything else  retried; if it never turns 200 -> ``::error::``, exit 1 (a 404
+* anything else  retried (3xx included: redirects are not followed); if it never turns 200 -> ``::error::``, exit 1 (a 404
                  means the routes are broken, which is a failed deploy)
 
 Standard library only.
@@ -26,7 +26,19 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-ALIAS = re.compile(r"Aliased:\s*(https://[A-Za-z0-9.-]+)")
+# Vercel CLI 58+ prints "▲ Aliased   https://x.vercel.app" (no colon); older ones "Aliased: https://...".
+ALIAS = re.compile(r"Aliased:?\s+(https://[A-Za-z0-9.-]+)")
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Report a 3xx as-is. Deployment Protection answers 302 to its SSO page, and
+    following it ends on a 200 login page: a false pass."""
+
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
 
 
 def production_url(log_text: str) -> str | None:
@@ -48,7 +60,7 @@ def pick_url(override: str | None, log_text: str, deploy_url: str | None) -> str
 def status_of(url: str, timeout: float) -> int:
     """HTTP status, or 0 for a timeout / connection error."""
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        with _OPENER.open(url, timeout=timeout) as resp:
             return resp.status
     except urllib.error.HTTPError as err:
         return err.code

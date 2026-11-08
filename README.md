@@ -157,6 +157,11 @@ first request (load, upcast, sha256 and one inference) 2.3-2.5 s. All 20 predict
 but the served head was fitted on all 1,440 RAVDESS clips, so that is an end-to-end
 check, not accuracy; the speaker-independent numbers are in [Results](#results).
 
+On Vercel (2026-11-08, a preview deployment of this exact bundle, Hobby 2 GB / 1 vCPU,
+10 RAVDESS clips sent from India): server `inference_ms` p50 707 ms; round trip p50 883 ms;
+first `/ready` after deploy (cold start: load, upcast, sha256) 7.0 s. The
+shared vCPU is about 6x slower than the local CPU above.
+
 Deploys run from [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) on pushes
 to `main`, only after the full test suite passes: download `model-v1` and check `SHA256SUMS`, build the bundle with
 [`scripts/build_vercel_bundle.py`](scripts/build_vercel_bundle.py), smoke-test it with
