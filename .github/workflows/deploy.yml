@@ -1,6 +1,7 @@
 name: deploy-api
 
-# Deploys api/index.py to Vercel (Python runtime) with the model-v1 release asset.
+# Deploys api/index.py to Vercel (Python runtime) with the model-v1 release asset, and the
+# site (web/dist) from the same origin.
 #
 # Needs repository secrets VERCEL_TOKEN, VERCEL_ORG_ID and VERCEL_PROJECT_ID.
 # Without VERCEL_TOKEN (forks, a repo not yet linked to Vercel) the job skips
@@ -10,7 +11,8 @@ name: deploy-api
 #                    (default: the production alias parsed from the deploy output,
 #                    else the per-deployment URL; a 401/403 from Deployment
 #                    Protection is reported as a warning, not a failure)
-#   ALLOWED_ORIGINS  comma-separated https origins of the site, passed to the function
+#   ALLOWED_ORIGINS  extra https origins allowed by CORS (the site itself is served from
+#                    the same origin, from web/dist, so it needs none)
 
 on:
   push:
@@ -23,6 +25,7 @@ on:
       - "scripts/vercel_fetch_model.py"
       - "scripts/check_deployment.py"
       - ".github/workflows/deploy.yml"
+      - "web/**"
   workflow_dispatch:
 
 permissions:
@@ -52,8 +55,24 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: pytest -q
 
+  web-test:
+    # The site ships in the same deploy: never ship one that fails its checks.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci && npm run lint && npm run typecheck && npm test && npm run build
+
   deploy:
-    needs: test
+    needs: [test, web-test]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -92,6 +111,17 @@ jobs:
         if: steps.creds.outputs.enabled == 'true'
         run: pip install -r api/requirements.txt httpx
 
+      - name: Build the site
+        if: steps.creds.outputs.enabled == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - if: steps.creds.outputs.enabled == 'true'
+        working-directory: web
+        run: npm ci && npm run build
+
       - name: Build the deploy bundle
         if: steps.creds.outputs.enabled == 'true'
         # Hobby caps CLI uploads at 100 MB, so the 190 MB model is fetched (and its
@@ -101,7 +131,7 @@ jobs:
           python scripts/build_vercel_bundle.py \
             --model "release/$MODEL_FILE" --sha256 "$MODEL_SHA256" \
             --fetch-url "https://github.com/$GITHUB_REPOSITORY/releases/download/$MODEL_TAG/$MODEL_FILE" \
-            --out .vercel-bundle --measure-deps
+            --web-dist web/dist --out .vercel-bundle --measure-deps
 
       - name: Smoke-test the bundled app with the real model
         if: steps.creds.outputs.enabled == 'true'

@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0A0A0C" />
+    <meta
+      name="description"
+      content="Speak for three seconds and a WavLM model reads the emotion in your voice. Nothing is stored."
+    />
+    <title>Voice Emotion: hear the feeling in three seconds</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <script type="module" src="/src/main.ts"></script>
+  </head>
+  <body>
+    <div class="glow-clip" aria-hidden="true"><div class="glows" id="glows"></div></div>
+    <div class="grain" aria-hidden="true"></div>
+
+    <main class="page" id="app" data-state="idle">
+      <header class="meta-row">
+        <span>(01) speech emotion</span>
+        <span>WavLM · 8 classes</span>
+      </header>
+
+      <h1 class="title">Emotion</h1>
+      <p class="lede">
+        Speak for three seconds. A WavLM model listens for how you say it, not what you say.
+      </p>
+
+      <span class="axis" aria-hidden="true"></span>
+
+      <section class="capture" aria-label="Record or choose a clip">
+        <button class="record" id="record" type="button" aria-describedby="record-hint">
+          <svg class="ring" viewBox="0 0 120 120" aria-hidden="true">
+            <circle class="ring-track" cx="60" cy="60" r="57" />
+            <circle class="ring-progress" id="ring" cx="60" cy="60" r="57" pathLength="1" />
+          </svg>
+          <span class="record-icon" id="record-icon"></span>
+          <span class="visually-hidden" id="record-label">Record 3 seconds</span>
+        </button>
+        <p class="hint" id="record-hint">(tap, then speak for 3 s)</p>
+
+        <label class="file" id="file-label">
+          <span class="file-icon" id="file-icon"></span>
+          <span>or choose an audio file</span>
+          <input class="visually-hidden" id="file" type="file" accept="audio/*" />
+        </label>
+
+        <p class="status" id="status" role="status" aria-live="polite"></p>
+      </section>
+
+      <section class="result" id="result" aria-labelledby="result-title" hidden>
+        <h2 class="visually-hidden" id="result-title">Result</h2>
+        <p class="kicker">(it sounds)</p>
+        <p class="verdict" id="verdict"></p>
+        <ol class="bars" id="bars"></ol>
+        <p class="timing" id="timing"></p>
+      </section>
+
+      <footer class="foot">
+        <p class="disclaimer">(acted English speech; not for decisions about people)</p>
+        <p>The 3 s clip is analysed and discarded. Nothing is stored or logged.</p>
+        <nav class="links" aria-label="About">
+          <a href="https://github.com/CODER7657/voice-emotion-detection">Source</a>
+          <a href="https://github.com/CODER7657/voice-emotion-detection/blob/main/MODEL_CARD.md"
+            >Model card</a
+          >
+          <a href="https://github.com/CODER7657/voice-emotion-detection#results">Results</a>
+        </nav>
+      </footer>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,35 @@
+/* Aurora (roadmap §3). Exact tokens; every colour in the app comes from here. */
+:root {
+  --bg: #0a0a0c;
+  --magenta: #ff2d95;
+  --orange: #ff7a1a;
+  --hot: #fff1e0;
+  --violet: #7b2ff7;
+  --cyan: #00c2ff;
+
+  /* Text on --bg: hot at full and 72% (contrast about 17:1 and 10:1). */
+  --text: var(--hot);
+  --text-dim: rgb(255 241 224 / 72%);
+  --rule: rgb(255 241 224 / 28%);
+
+  --font-display: "Syne", "Arial Black", sans-serif;
+  --font-ui: "Space Grotesk", system-ui, sans-serif;
+
+  --step--2: clamp(0.75rem, 0.73rem + 0.1vw, 0.8125rem); /* >= 12 px: legible on phones */
+  --step--1: clamp(0.8125rem, 0.78rem + 0.15vw, 0.9rem);
+  --step-0: clamp(0.95rem, 0.9rem + 0.25vw, 1.0625rem);
+  --step-2: clamp(1.75rem, 1.3rem + 2.2vw, 2.75rem);
+  /* "EMOTION" in Syne 800 measures about 7.85em: 11.5vw leaves a margin at 375-768 px. */
+  --step-5: clamp(2.25rem, 11.5vw, 9.5rem);
+
+  --space-1: 0.5rem;
+  --space-2: 1rem;
+  --space-3: 1.5rem;
+  --space-4: 2.5rem;
+  --space-5: 4rem;
+
+  --glow-blur: 80px;
+  --grain-opacity: 0.12;
+  --target: 44px;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+}

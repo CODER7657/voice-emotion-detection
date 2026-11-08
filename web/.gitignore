@@ -1,0 +1,7 @@
+node_modules/
+dist/
+playwright-report/
+test-results/
+
+# Synthetic e2e fixtures (scripts/make_web_e2e_fixture.py), not dataset audio
+!e2e/fixtures/*.wav
