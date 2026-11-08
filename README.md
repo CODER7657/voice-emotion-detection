@@ -89,23 +89,29 @@ to ONNX and checks it against PyTorch on the same 6 speaker-independent folds
 | Embedding backend | Macro-F1 | CPU p50 / p95 | Size |
 |---|---|---|---|
 | PyTorch fp32 | 0.750 ± 0.072 | 578 / 619 ms | |
-| **ONNX fp32 (served)** | **0.749 ± 0.074** | **505 / 546 ms** | 378 MB |
+| ONNX fp32 | 0.749 ± 0.074 | 505 / 546 ms | 378 MB |
+| **ONNX, fp16-stored weights (served)** | **0.750** | as fp32 (compute is fp32) | **190 MB** |
 | ONNX int8, dynamic quantisation | 0.657 ± 0.033 | 1,217 / 1,257 ms | 96 MB |
 
 Dynamic int8 quantisation looked like the obvious step and was a bad trade here: the
 embeddings drifted (cosine 0.62 against PyTorch), macro-F1 fell 9 points, and it ran
 more than twice as slowly on this CPU. The fp32 export matches PyTorch exactly (cosine
-1.00) and is 13% faster, so that is what [`src/vemo/serve.py`](src/vemo/serve.py)
-serves:
+1.00) and is 13% faster. The served copy stores those same weights as fp16
+([`scripts/to_fp16.py`](scripts/to_fp16.py)) and [`src/vemo/serve.py`](src/vemo/serve.py)
+upcasts them to fp32 when it loads, so only the weights are rounded, never the
+arithmetic. Measured 2026-11-08 on all 1,440 clips: cosine 1.000000 (mean and minimum)
+against the fp32 model, and macro-F1 0.7501 on the same 6 folds (fp32: 0.7487), at half
+the size:
 
 ```bash
 pip install -e ".[serve,export]"
 python scripts/export_onnx.py --ravdess /path/to/ravdess --out models   # once, about 30 min on CPU
+python scripts/to_fp16.py                                               # models/wavlm_pooled_fp16w.onnx
 uvicorn vemo.serve:app --port 8000
 curl -F "file=@clip.wav" localhost:8000/predict
 ```
 
-The 378 MB model isn't committed; the export recreates it. Report:
+Neither model is committed; the export recreates them, and the fp16 copy is published as the `model-v1` release asset with its sha256. Report:
 [`results/export/export_report.json`](results/export/export_report.json). Both runs:
 [`notebooks/cross_dataset_onnx_colab.ipynb`](notebooks/cross_dataset_onnx_colab.ipynb).
 

@@ -168,3 +168,31 @@ def test_the_server_loads_the_fp16_file_and_prefers_it(models, tmp_path, monkeyp
     assert set(out["probabilities"]) == set(head["classes"])
     reference = _run(weights.load_model_bytes(fp32), wave[None])
     assert _cosine(served.embed(wave), reference) >= 0.999
+
+
+def _to_fp16_main():
+    import importlib.util
+    import pathlib
+
+    path = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "to_fp16.py"
+    spec = importlib.util.spec_from_file_location("to_fp16", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.main
+
+
+def test_to_fp16_script_converts_and_writes_the_release_checksum(tmp_path):
+    src = _write_model(tmp_path / "fp32.onnx")
+    dst = tmp_path / "fp16w.onnx"
+    assert _to_fp16_main()(["--src", str(src), "--dst", str(dst)]) == 0
+    line = (tmp_path / "SHA256SUMS.fp16w").read_text(encoding="utf-8")
+    assert line == f"{weights.sha256_file(dst)}  fp16w.onnx\n"
+    x = np.random.default_rng(5).normal(size=(1, 256)).astype(np.float32)
+    assert _cosine(_run(weights.load_model_bytes(dst), x), _run(weights.load_model_bytes(src), x)) >= 0.999
+
+
+def test_to_fp16_script_refuses_an_unexpected_input(tmp_path):
+    src = _write_model(tmp_path / "fp32.onnx")
+    dst = tmp_path / "fp16w.onnx"
+    assert _to_fp16_main()(["--src", str(src), "--dst", str(dst), "--expect-src-sha256", "0" * 64]) == 1
+    assert not dst.exists()
