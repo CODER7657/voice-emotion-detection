@@ -3,6 +3,12 @@
 [![tests](https://github.com/CODER7657/voice-emotion-detection/actions/workflows/tests.yml/badge.svg)](https://github.com/CODER7657/voice-emotion-detection/actions/workflows/tests.yml)
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/CODER7657/voice-emotion-detection/blob/main/notebooks/train_colab.ipynb)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Live](https://img.shields.io/badge/live-vemo--api.vercel.app-ff2d95.svg)](https://vemo-api.vercel.app)
+
+**Live:** <https://vemo-api.vercel.app>. Record three seconds or choose a file
+([how the web app works](#web-app)).
+
+<img src="docs/screens/web-desktop-1280-result.webp" alt="The web app: wide EMOTION title, record button, and the result CALM 58% over the glow field" width="640">
 
 Recognizes 8 emotions from short speech clips (RAVDESS), and measures how much the
 first version of this project overstated its own accuracy.
