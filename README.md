@@ -154,6 +154,16 @@ pip install -e ".[dev]"
 pytest
 ```
 
+**Evaluation gate.** [`tests/test_eval_gate.py`](tests/test_eval_gate.py) re-runs the
+6-fold actor-grouped evaluation in CI on the committed embeddings
+([`models/embeddings_onnx_fp32.npz`](models/embeddings_onnx_fp32.npz), 2 MB, one WavLM
+embedding per RAVDESS clip from the served ONNX export), so no audio or model is needed.
+The build fails if speaker-independent macro-F1 drops below **0.72** (measured
+2026-11-08: 0.751 ± 0.070) or if refitting the classifier disagrees with the shipped
+[`models/head.json`](models/head.json) on more than 1% of clips. Both checks were shown
+to fail: an over-regularised head scored 0.388, and a tampered head agreed on 7.9%.
+The embeddings and head are derived from RAVDESS (CC BY-NC-SA 4.0, see [NOTICE](NOTICE)).
+
 `vemo.trim` is a NumPy-only port of the silence trim the model was trained behind
 (`librosa.effects.trim`, `top_db=30`, then 3 s), so serving does not need librosa.
 Measured 2026-11-07: start and end samples identical to librosa (maximum

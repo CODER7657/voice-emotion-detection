@@ -1,0 +1,10 @@
+models/embeddings_onnx_fp32.npz and models/head.json are derived from RAVDESS:
+
+  Livingstone, S. R., & Russo, F. A. (2018). The Ryerson Audio-Visual Database of
+  Emotional Speech and Song (RAVDESS). PLoS ONE 13(5): e0196391.
+  https://doi.org/10.1371/journal.pone.0196391 · https://zenodo.org/records/1188976
+
+RAVDESS is licensed CC BY-NC-SA 4.0 (https://creativecommons.org/licenses/by-nc-sa/4.0/).
+The embeddings (WavLM-base-plus, mean-pooled, stored as float16) and the logistic-regression
+head fitted on them are shared under the same licence: attribution, non-commercial use,
+share-alike. No audio is redistributed. The code in this repository is MIT (see LICENSE).
