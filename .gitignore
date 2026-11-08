@@ -8,3 +8,4 @@ data/
 models/*.h5
 models/*.onnx
 results/cross_dataset/*.npz
+.vercel-bundle/

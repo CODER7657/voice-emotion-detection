@@ -1,0 +1,144 @@
+name: deploy-api
+
+# Deploys api/index.py to Vercel (Python runtime) with the model-v1 release asset.
+#
+# Needs repository secrets VERCEL_TOKEN, VERCEL_ORG_ID and VERCEL_PROJECT_ID.
+# Without VERCEL_TOKEN (forks, a repo not yet linked to Vercel) the job skips
+# the deploy with a notice instead of failing.
+# Optional repository variables:
+#   LIVE_API_URL     production URL to health-check, e.g. https://<project>.vercel.app
+#                    (default: the deployment URL the CLI prints; that one may sit
+#                    behind Vercel Deployment Protection and answer 401)
+#   ALLOWED_ORIGINS  comma-separated https origins of the site, passed to the function
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "api/**"
+      - "src/vemo/**"
+      - "models/head.json"
+      - "scripts/build_vercel_bundle.py"
+      - "scripts/vercel_fetch_model.py"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-api
+  cancel-in-progress: false
+
+env:
+  MODEL_TAG: model-v1
+  MODEL_FILE: wavlm_pooled_fp16w.onnx
+  VERCEL_CLI_VERSION: 65.12.1
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check for Vercel credentials
+        id: creds
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "::notice title=deploy skipped::VERCEL_TOKEN is not set (fork or repo not linked to Vercel); nothing deployed."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: steps.creds.outputs.enabled == 'true'
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        if: steps.creds.outputs.enabled == 'true'
+        with:
+          python-version: "3.12"
+
+      - name: Download and verify the model release asset
+        if: steps.creds.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p release && cd release
+          gh release download "$MODEL_TAG" -R "$GITHUB_REPOSITORY" -p "$MODEL_FILE" -p SHA256SUMS
+          sha256sum -c SHA256SUMS
+          echo "MODEL_SHA256=$(awk -v f="$MODEL_FILE" '$2 == f || $2 == "*" f {print $1}' SHA256SUMS)" >> "$GITHUB_ENV"
+
+      - name: Install the function's runtime requirements
+        if: steps.creds.outputs.enabled == 'true'
+        run: pip install -r api/requirements.txt httpx
+
+      - name: Build the deploy bundle
+        if: steps.creds.outputs.enabled == 'true'
+        # Hobby caps CLI uploads at 100 MB, so the 190 MB model is fetched (and its
+        # sha256 checked) by the bundle's build step on Vercel instead of uploaded.
+        run: |
+          test ${#MODEL_SHA256} -eq 64
+          python scripts/build_vercel_bundle.py \
+            --model "release/$MODEL_FILE" --sha256 "$MODEL_SHA256" \
+            --fetch-url "https://github.com/$GITHUB_REPOSITORY/releases/download/$MODEL_TAG/$MODEL_FILE" \
+            --out .vercel-bundle --measure-deps
+
+      - name: Smoke-test the bundled app with the real model
+        if: steps.creds.outputs.enabled == 'true'
+        working-directory: .vercel-bundle
+        run: |
+          mkdir -p ../smoke-models
+          cp models/head.json ../smoke-models/
+          cp "../release/$MODEL_FILE" ../smoke-models/
+          VEMO_MODEL_DIR=../smoke-models python - <<'PY'
+          import importlib.util, sys
+          import numpy as np
+          spec = importlib.util.spec_from_file_location("idx", "api/index.py")
+          m = importlib.util.module_from_spec(spec); sys.modules["idx"] = m; spec.loader.exec_module(m)
+          from fastapi.testclient import TestClient
+          c = TestClient(m.app)
+          r = c.get("/ready"); print(r.status_code, r.text); assert r.status_code == 200
+          t = np.arange(48000) / 16000
+          wave = (0.3 * np.sin(2 * np.pi * 220 * t)).astype("<f4").tobytes()
+          r = c.post("/predict", content=wave, headers={"Content-Type": "application/octet-stream"})
+          print(r.status_code, r.text); assert r.status_code == 200
+          PY
+
+      - name: Deploy to Vercel (production)
+        if: steps.creds.outputs.enabled == 'true'
+        id: deploy
+        working-directory: .vercel-bundle
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          ALLOWED_ORIGINS: ${{ vars.ALLOWED_ORIGINS }}
+        run: |
+          npm i -g "vercel@$VERCEL_CLI_VERSION"
+          url=$(vercel deploy --prod --yes --token "$VERCEL_TOKEN" \
+                  --env MODEL_SHA256="$MODEL_SHA256" \
+                  --env ALLOWED_ORIGINS="$ALLOWED_ORIGINS" | tail -n 1)
+          echo "deployed: $url"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Health-check the deployment
+        if: steps.creds.outputs.enabled == 'true'
+        env:
+          LIVE_API_URL: ${{ vars.LIVE_API_URL }}
+          DEPLOY_URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          base="${LIVE_API_URL:-$DEPLOY_URL}"
+          base="${base%/}"
+          case "$base" in https://*) ;; *) echo "::error::no https URL to check ($base)"; exit 1 ;; esac
+          for path in /health /ready; do
+            ok=
+            for i in $(seq 1 12); do  # up to ~2 min each: the first /ready loads the model
+              code=$(curl -s -o /tmp/body -w '%{http_code}' --max-time 60 "$base$path" || true)
+              echo "$path attempt $i: $code"
+              if [ "$code" = "200" ]; then ok=1; cat /tmp/body; echo; break; fi
+              sleep 10
+            done
+            if [ -z "$ok" ]; then echo "::error::$base$path did not return 200"; cat /tmp/body || true; exit 1; fi
+          done
