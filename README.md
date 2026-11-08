@@ -148,6 +148,16 @@ pip install -e ".[dev]"
 pytest
 ```
 
+`vemo.trim` is a NumPy-only port of the silence trim the model was trained behind
+(`librosa.effects.trim`, `top_db=30`, then 3 s), so serving does not need librosa.
+Measured 2026-11-07: start and end samples identical to librosa (maximum
+difference 0; the test allows ±1) on 50 synthetic clips in CI and on 50 RAVDESS
+clips locally. To repeat the real-speech check, point it at a folder of `.wav` files:
+
+```bash
+VEMO_CLIPS_DIR=/path/to/wavs pytest tests/test_trim.py
+```
+
 ## Limitations
 
 - **Acted speech.** RAVDESS is 24 North American actors reading two fixed sentences.
