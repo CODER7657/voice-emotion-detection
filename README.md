@@ -115,6 +115,53 @@ Neither model is committed; the export recreates them, and the fp16 copy is publ
 [`results/export/export_report.json`](results/export/export_report.json). Both runs:
 [`notebooks/cross_dataset_onnx_colab.ipynb`](notebooks/cross_dataset_onnx_colab.ipynb).
 
+### Live API
+
+`api/index.py` serves the same model as a Vercel Python function at `<live URL>`.
+There is no audio decoding on the server: the browser records, resamples to 16 kHz
+mono and sends exactly 3 s as raw samples. The server trims silence (the NumPy port in
+`vemo.trim`), runs the fp16-stored WavLM (upcast to fp32) and the logistic-regression
+head. The function depends only on numpy, onnx, onnxruntime and fastapi
+([`api/requirements.txt`](api/requirements.txt)).
+
+| | |
+|---|---|
+| `POST /predict` | body: 48,000 float32 little-endian samples (192,000 bytes), `Content-Type: application/octet-stream` |
+| `GET /health` | liveness; never loads the model |
+| `GET /ready` | 200 once the model and head are present, the sha256 matches the pin, and the session loads; otherwise 503 naming the missing part |
+| Errors | 400 wrong length or NaN/Inf; 413 body over 256 KB; 415 other content types; 429 over 20 requests/min per IP (with `Retry-After`); 503 model unavailable |
+| CORS | only the origins listed in `ALLOWED_ORIGINS` (exact https origins); none by default |
+
+```bash
+# make a 3 s, 16 kHz mono float32 file from any clip (needs librosa locally, not on the server)
+python -c "import librosa, numpy as np; y,_ = librosa.load('clip.wav', sr=16000, mono=True); \
+y = np.pad(y[:48000], (0, max(0, 48000 - len(y)))); y.astype('<f4').tofile('clip.f32')"
+curl -s -X POST --data-binary @clip.f32 -H "Content-Type: application/octet-stream" <live URL>/predict
+```
+
+```json
+{"emotion": "angry", "probabilities": {"angry": 0.91, "...": "all 8, sorted, 4 dp"},
+ "inference_ms": 110.0, "model_sha256": "ea666f45...", "note": "Trained on acted English speech (RAVDESS). Not for decisions about people."}
+```
+
+Trained on acted English speech (RAVDESS). Not for decisions about people: it has not
+been validated on spontaneous speech, other languages, or anyone's real emotional state.
+
+Measured locally on this CPU (2026-11-08, in-process, real `model-v1` model,
+[`scripts/check_api_real_model.py`](scripts/check_api_real_model.py), 20 RAVDESS clips
+sent as the browser would, two runs): `inference_ms` p50 110-122 ms, p95 123-137 ms;
+first request (load, upcast, sha256 and one inference) 2.3-2.5 s. All 20 predictions matched the label,
+but the served head was fitted on all 1,440 RAVDESS clips, so that is an end-to-end
+check, not accuracy; the speaker-independent numbers are in [Results](#results).
+
+Deploys run from [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) on pushes
+to `main`: download `model-v1` and check `SHA256SUMS`, build the bundle with
+[`scripts/build_vercel_bundle.py`](scripts/build_vercel_bundle.py), smoke-test it with
+the real model, deploy, then poll `/health` and `/ready`. Vercel's Hobby plan caps CLI
+uploads at 100 MB, so the bundle (0.2 MB) carries a build step that downloads the 190 MB
+asset on Vercel and verifies its sha256; function size is 374 MB (model 190 MB plus
+dependencies 184 MB) against Vercel's 500 MB limit for Python functions.
+
 ## How it works
 
 ```
