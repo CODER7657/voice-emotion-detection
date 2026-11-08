@@ -55,9 +55,10 @@ def post(client, body, headers=None):
 # ---------------------------------------------------------------- happy path
 
 
-def test_predict_returns_all_classes_sorted(client, standin_model_dir):
+def test_predict_returns_all_classes_sorted(client, standin_model_dir, monkeypatch):
     from vemo.weights import sha256_file
 
+    monkeypatch.setenv("MODEL_SHA256", sha256_file(standin_model_dir / "wavlm_pooled_fp16w.onnx"))
     r = post(client, pcm())
     assert r.status_code == 200, r.text
     body = r.json()
@@ -100,13 +101,24 @@ def test_content_type_with_parameters_is_accepted(client):
     assert r.status_code == 200
 
 
-def test_missing_content_type_is_accepted(client):
-    # Raw-body clients such as `curl --data-binary` may omit it; the length check still applies.
-    assert client.post("/predict", content=pcm()).status_code == 200
+def test_model_sha256_is_null_when_no_pin_is_set(client, api_env, monkeypatch):
+    """Without MODEL_SHA256 the 190 MB hash is skipped entirely."""
+    monkeypatch.setattr(api_env, "sha256_bytes", lambda data: pytest.fail("hashed without a pin"))
+    r = post(client, pcm())
+    assert r.status_code == 200 and r.json()["model_sha256"] is None
 
 
-def test_other_content_types_are_415(client):
-    r = client.post("/predict", content=pcm(), headers={"Content-Type": "audio/wav"})
+def test_missing_content_type_is_415(client):
+    r = client.post("/predict", content=pcm())
+    assert r.request.headers.get("content-type") is None
+    assert r.status_code == 415
+
+
+@pytest.mark.parametrize("ctype", ["audio/wav", "text/plain", "application/json",
+                                   "application/x-www-form-urlencoded", "multipart/form-data; boundary=x",
+                                   "application/octet-streamx"])
+def test_other_content_types_are_415(client, ctype):
+    r = client.post("/predict", content=pcm(), headers={"Content-Type": ctype})
     assert r.status_code == 415
 
 
@@ -186,9 +198,10 @@ def test_health_does_not_load_the_model(client, api_env, monkeypatch):
     assert api_env._cache == {}
 
 
-def test_ready_when_model_present(client, standin_model_dir):
+def test_ready_when_model_present(client, standin_model_dir, monkeypatch):
     from vemo.weights import sha256_file
 
+    monkeypatch.setenv("MODEL_SHA256", sha256_file(standin_model_dir / "wavlm_pooled_fp16w.onnx"))
     r = client.get("/ready")
     assert r.status_code == 200
     assert r.json()["model_sha256"] == sha256_file(standin_model_dir / "wavlm_pooled_fp16w.onnx")
@@ -276,6 +289,124 @@ def test_failure_is_cached_until_files_change(client, api_env, monkeypatch, tmp_
         shutil.copy(standin_model_dir / f, tmp_path / f)
     assert client.get("/ready").status_code == 200
     assert len(calls) == 2
+
+
+def test_model_file_is_read_once_per_load(client, api_env, monkeypatch, standin_model_dir):
+    from vemo.weights import sha256_file
+
+    monkeypatch.setenv("MODEL_SHA256", sha256_file(standin_model_dir / "wavlm_pooled_fp16w.onnx"))
+    reads = []
+    real = api_env._read_bytes
+    monkeypatch.setattr(api_env, "_read_bytes", lambda p: reads.append(p.name) or real(p))
+    assert client.get("/ready").status_code == 200
+    assert post(client, pcm()).status_code == 200
+    assert reads == ["head.json", "wavlm_pooled_fp16w.onnx"]
+
+
+def test_transient_session_failure_is_retried(client, api_env, monkeypatch):
+    calls = []
+    real = api_env._make_session
+
+    def flaky(data):
+        calls.append(1)
+        if len(calls) == 1:
+            raise MemoryError("simulated")
+        return real(data)
+
+    monkeypatch.setattr(api_env, "_make_session", flaky)
+    r = client.get("/ready")
+    assert r.status_code == 503 and r.json()["missing"] == ["session"]
+    assert "MemoryError" in r.json()["reason"]
+    assert client.get("/ready").status_code == 200  # not cached: retried and succeeded
+    assert post(client, pcm()).status_code == 200
+    assert len(calls) == 2  # and then cached
+
+
+def test_onnxruntime_error_on_predict_is_503_then_recovers(client, api_env, monkeypatch):
+    calls = []
+    real = api_env._make_session
+
+    def flaky(data):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("onnxruntime: simulated allocation failure")
+        return real(data)
+
+    monkeypatch.setattr(api_env, "_make_session", flaky)
+    assert post(client, pcm()).status_code == 503
+    assert post(client, pcm()).status_code == 200
+
+
+@pytest.mark.parametrize("which", ["wavlm_pooled_fp16w.onnx", "head.json"])
+def test_read_error_is_503_and_retried(client, api_env, monkeypatch, which):
+    calls = []
+    real = api_env._read_bytes
+
+    def flaky(path):
+        if path.name == which and not calls:
+            calls.append(1)
+            raise PermissionError(13, "simulated EACCES")
+        return real(path)
+
+    monkeypatch.setattr(api_env, "_read_bytes", flaky)
+    r = client.get("/ready")
+    assert r.status_code == 503
+    assert r.json()["missing"] == (["model"] if which.endswith(".onnx") else ["head"])
+    assert "PermissionError" in r.json()["reason"] and "EACCES" not in r.text
+    assert client.get("/ready").status_code == 200
+
+
+def test_read_error_on_predict_is_503_not_500(client, api_env, monkeypatch):
+    def broken(path):
+        raise OSError(5, "simulated EIO")
+
+    monkeypatch.setattr(api_env, "_read_bytes", broken)
+    assert post(client, pcm()).status_code == 503
+
+
+def _with_head(tmp_path, standin_model_dir, mutate):
+    import shutil
+
+    shutil.copy(standin_model_dir / "wavlm_pooled_fp16w.onnx", tmp_path / "wavlm_pooled_fp16w.onnx")
+    head = json.loads((standin_model_dir / "head.json").read_text())
+    mutate(head)
+    # allow_nan so Infinity/NaN reach the file, as a hand-edited head.json could
+    (tmp_path / "head.json").write_text(json.dumps(head, allow_nan=True))
+    return tmp_path
+
+
+@pytest.mark.parametrize("mutate", [
+    pytest.param(lambda h: h["scale"].__setitem__(0, 0.0), id="zero-scale"),
+    pytest.param(lambda h: h["mean"].__setitem__(3, "abc"), id="non-numeric-mean"),
+    pytest.param(lambda h: h["coef"][2].__setitem__(1, float("inf")), id="inf-coef"),
+    pytest.param(lambda h: h["intercept"].__setitem__(0, float("nan")), id="nan-intercept"),
+])
+def test_bad_head_values_are_503_never_500(client, monkeypatch, tmp_path, standin_model_dir, mutate):
+    monkeypatch.setenv("VEMO_MODEL_DIR", str(_with_head(tmp_path, standin_model_dir, mutate)))
+    r = client.get("/ready")
+    assert r.status_code == 503 and r.json()["missing"] == ["head"]
+    p = post(client, pcm())
+    assert p.status_code == 503
+
+
+def test_non_utf8_head_is_503(client, monkeypatch, tmp_path, standin_model_dir):
+    import shutil
+
+    shutil.copy(standin_model_dir / "wavlm_pooled_fp16w.onnx", tmp_path / "wavlm_pooled_fp16w.onnx")
+    (tmp_path / "head.json").write_bytes(bytes([0xFF, 0xFE]) + b"{")
+    monkeypatch.setenv("VEMO_MODEL_DIR", str(tmp_path))
+    assert client.get("/ready").status_code == 503
+
+
+def test_non_finite_model_output_is_503(client, api_env, monkeypatch):
+    class NaNSession:
+        def run(self, outputs, feeds):
+            return [np.full((1, 16), np.nan, dtype=np.float32)]
+
+    real = api_env.get_model
+    monkeypatch.setattr(api_env, "get_model", lambda: real()._replace(session=NaNSession()))
+    r = post(client, pcm())
+    assert r.status_code == 503
 
 
 # ---------------------------------------------------------------- rate limit

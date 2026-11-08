@@ -28,8 +28,8 @@ def test_bundle_layout_and_config(tmp_path, standin):
     out = bvb.build(standin, tmp_path / "bundle", region="iad1")
     files = sorted(str(p.relative_to(out)).replace("\\", "/") for p in out.rglob("*") if p.is_file())
     assert files == [
-        ".python-version", "api/index.py", "models/head.json", "models/wavlm_pooled_fp16w.onnx",
-        "pyproject.toml", "requirements.txt", "src/vemo/__init__.py", "src/vemo/head.py",
+        ".python-version", ".vemo-bundle", "api/index.py", "models/head.json", "models/wavlm_pooled_fp16w.onnx",
+        "pyproject.toml", "src/vemo/__init__.py", "src/vemo/head.py",
         "src/vemo/trim.py", "src/vemo/weights.py", "vercel.json",
     ]
     cfg = json.loads((out / "vercel.json").read_text())
@@ -40,7 +40,10 @@ def test_bundle_layout_and_config(tmp_path, standin):
     pyproject = (out / "pyproject.toml").read_text()
     assert 'entrypoint = "api.index:app"' in pyproject and ">=3.12,<3.13" in pyproject
     assert (out / ".python-version").read_text().strip() == "3.12"
-    assert (out / "requirements.txt").read_text() == (ROOT / "api" / "requirements.txt").read_text()
+    pins = [ln.strip() for ln in (ROOT / "api" / "requirements.txt").read_text().splitlines()
+            if ln.strip() and not ln.startswith("#")]
+    assert bvb.bundle_dependencies(out) == pins  # one dependency source, the pinned runtime list
+    assert not (out / "requirements.txt").exists()
     for heavy in ("librosa", "torch", "scikit-learn", "sklearn", "pandas"):
         assert heavy not in pyproject
 
@@ -88,6 +91,30 @@ def test_will_not_delete_an_unrelated_directory(tmp_path, standin):
     with pytest.raises(FileExistsError):
         bvb.build(standin, precious)
     assert (precious / "keep.txt").exists()
+
+
+def test_will_not_delete_a_dir_with_vercel_json_but_no_marker(tmp_path, standin):
+    other = tmp_path / "someone-elses-vercel-project"
+    other.mkdir()
+    (other / "vercel.json").write_text("{}")
+    (other / "app.py").write_text("keep me")
+    with pytest.raises(FileExistsError, match=".vemo-bundle"):
+        bvb.build(standin, other)
+    assert (other / "app.py").read_text() == "keep me"
+
+
+def test_will_not_replace_a_file(tmp_path, standin):
+    target = tmp_path / "file"
+    target.write_text("x")
+    with pytest.raises(FileExistsError):
+        bvb.build(standin, target)
+    assert target.read_text() == "x"
+
+
+def test_builds_into_an_existing_empty_dir(tmp_path, standin):
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert (bvb.build(standin, empty) / ".vemo-bundle").is_file()
 
 
 def test_rebuild_replaces_previous_bundle(tmp_path, standin):
@@ -186,6 +213,48 @@ def test_main_fetch_mode_counts_the_model(tmp_path, standin, capsys):
 
 
 import vercel_fetch_model as vfm  # noqa: E402
+
+
+def test_bake_requires_exactly_one_placeholder():
+    line = 'MODEL_URL = ""'
+    assert bvb._bake(line + "\n", "MODEL_URL", URL) == f"MODEL_URL = {URL!r}\n"
+    with pytest.raises(ValueError, match="exactly one"):
+        bvb._bake("MODEL_URL = None\n", "MODEL_URL", URL)
+    with pytest.raises(ValueError, match="exactly one"):
+        bvb._bake(line + "\n" + line + "\n", "MODEL_URL", URL)
+
+
+def test_build_fails_clearly_if_the_template_lost_its_placeholder(tmp_path, standin, monkeypatch):
+    fake_root = tmp_path / "root"
+    for sub in ("api", "scripts", "src/vemo", "models"):
+        (fake_root / sub).mkdir(parents=True)
+    import shutil
+
+    shutil.copy(ROOT / "api" / "index.py", fake_root / "api" / "index.py")
+    shutil.copy(ROOT / "api" / "requirements.txt", fake_root / "api" / "requirements.txt")
+    for name in bvb.VEMO_MODULES:
+        shutil.copy(ROOT / "src" / "vemo" / name, fake_root / "src" / "vemo" / name)
+    template = (ROOT / "scripts" / "vercel_fetch_model.py").read_text().replace('MODEL_SHA256 = ""', "MODEL_SHA256 = None")
+    (fake_root / "scripts" / "vercel_fetch_model.py").write_text(template)
+    monkeypatch.setattr(bvb, "ROOT", fake_root)
+    with pytest.raises(ValueError, match="MODEL_SHA256"):
+        bvb.build(standin, tmp_path / "bundle", fetch_url=URL, head=standin.parent / "head.json")
+
+
+def test_measure_deps_installs_exactly_the_pyproject_dependencies(tmp_path, standin):
+    out = bvb.build(standin, tmp_path / "bundle")
+    seen = {}
+
+    def fake_run(cmd, **kwargs):
+        seen["reqs"] = Path(cmd[cmd.index("-r") + 1]).read_text().split()
+        seen["cmd"] = cmd
+        target = Path(cmd[cmd.index("--target") + 1])
+        target.mkdir()
+        (target / "pkg.bin").write_bytes(b"x" * 1234)
+
+    assert bvb.measure_deps(out, run=fake_run) == 1234
+    assert seen["reqs"] == bvb.bundle_dependencies(out)
+    assert "3.12" in seen["cmd"] and "--only-binary=:all:" in seen["cmd"]
 
 
 def test_fetch_rejects_wrong_hash_and_leaves_nothing(tmp_path):

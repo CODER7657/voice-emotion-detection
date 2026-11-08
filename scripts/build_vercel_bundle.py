@@ -22,9 +22,14 @@ Layout (mirrors the repo, so api/index.py finds vemo and models/ the same way):
     models/head.json
     models/wavlm_pooled_fp16w.onnx   copy mode (fetch mode: written by vercel_build.py)
     vercel_build.py              fetch mode only
-    requirements.txt             copy of api/requirements.txt
-    pyproject.toml               Python 3.12, tool.vercel.entrypoint = api.index:app
-    .python-version, vercel.json
+    pyproject.toml               the ONLY dependency source (pins from api/requirements.txt),
+                                 Python 3.12, tool.vercel.entrypoint = api.index:app
+    .python-version, vercel.json, .vemo-bundle (marker: safe to delete on rebuild)
+
+No requirements.txt is emitted: Vercel's Python builder installs from the native
+pyproject.toml when one exists and only converts requirements.txt when it does
+not (vercel/vercel packages/python/src/install.ts, checked 2026-11-08), and the
+bundle needs pyproject.toml anyway for the entrypoint and build hook.
 
 The bundle, the model and the installed dependencies must stay under Vercel's
 Python function limit: 500 MB uncompressed (vercel.com/docs/functions/limitations,
@@ -36,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import tomllib
 import shutil
 import subprocess
 import sys
@@ -50,6 +56,7 @@ from vemo.weights import sha256_file, verify_sha256  # noqa: E402
 LIMIT_MB = 500  # Vercel Python function, uncompressed
 VEMO_MODULES = ("__init__.py", "head.py", "trim.py", "weights.py")
 ONNX_FILE = "wavlm_pooled_fp16w.onnx"
+MARKER = ".vemo-bundle"
 MAX_DURATION_S = 60  # cold start (load + upcast 190 MB) plus one inference; Hobby max is 300
 NL = "\n"
 
@@ -89,16 +96,38 @@ def dir_size(path: Path) -> int:
     return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
 
 
-def measure_deps(requirements: Path) -> int:
+def bundle_dependencies(bundle: Path) -> list[str]:
+    """The dependency list Vercel will install: [project].dependencies of the bundle's pyproject."""
+    with open(bundle / "pyproject.toml", "rb") as handle:
+        return list(tomllib.load(handle)["project"]["dependencies"])
+
+
+def measure_deps(bundle: Path, run=subprocess.run) -> int:
+    """Install the bundle's own pyproject dependencies (py3.12 manylinux) and measure them."""
+    deps = bundle_dependencies(bundle)
     with tempfile.TemporaryDirectory() as tmp:
-        subprocess.run(
+        reqs = Path(tmp) / "requirements-from-pyproject.txt"
+        reqs.write_text(NL.join(deps) + NL, encoding="utf-8")
+        target = Path(tmp) / "site"
+        run(
             [sys.executable, "-m", "pip", "install", "--quiet", "--disable-pip-version-check",
-             "--target", tmp, "--only-binary=:all:", "--python-version", "3.12",
+             "--target", str(target), "--only-binary=:all:", "--python-version", "3.12",
              "--implementation", "cp", "--platform", "manylinux_2_28_x86_64",
-             "--platform", "manylinux2014_x86_64", "-r", str(requirements)],
+             "--platform", "manylinux2014_x86_64", "-r", str(reqs)],
             check=True, timeout=600,
         )
-        return dir_size(Path(tmp))
+        return dir_size(target) if target.exists() else 0
+
+
+def _bake(src: str, name: str, value: str) -> str:
+    placeholder = f'{name} = ""'
+    if src.count(placeholder) != 1:
+        raise ValueError(f"vercel_fetch_model.py must contain exactly one `{placeholder}` placeholder "
+                         f"to bake the {name} into; found {src.count(placeholder)}")
+    baked = src.replace(placeholder, f"{name} = {value!r}", 1)
+    if baked == src:
+        raise ValueError(f"failed to bake {name} into vercel_build.py")
+    return baked
 
 
 def _write(path: Path, text: str) -> None:
@@ -118,9 +147,11 @@ def build(model: Path, out: Path, sha256: str | None = None, region: str = "bom1
         verify_sha256(model, sha256)
     pinned = (sha256 or sha256_file(model)).strip().lower()
     if out.exists():
-        if not (out / "vercel.json").exists() and any(out.iterdir()):
-            raise FileExistsError(f"{out} exists and does not look like a bundle; refusing to delete it")
-        shutil.rmtree(out)
+        if (out / MARKER).is_file():
+            shutil.rmtree(out)
+        elif not out.is_dir() or any(out.iterdir()):
+            raise FileExistsError(f"{out} exists and was not created by this script (no {MARKER} marker); "
+                                  "refusing to delete it")
     (out / "api").mkdir(parents=True)
     (out / "src" / "vemo").mkdir(parents=True)
     (out / "models").mkdir()
@@ -131,18 +162,17 @@ def build(model: Path, out: Path, sha256: str | None = None, region: str = "bom1
     shutil.copy2(head, out / "models" / "head.json")
     if fetch_url:
         src = (ROOT / "scripts" / "vercel_fetch_model.py").read_text(encoding="utf-8")
-        src = src.replace('MODEL_URL = ""', f"MODEL_URL = {fetch_url!r}", 1)
-        src = src.replace('MODEL_SHA256 = ""', f"MODEL_SHA256 = {pinned!r}", 1)
+        src = _bake(_bake(src, "MODEL_URL", fetch_url), "MODEL_SHA256", pinned)
         _write(out / "vercel_build.py", src)
     else:
         shutil.copy2(model, out / "models" / ONNX_FILE)
 
     reqs = [ln.strip() for ln in (ROOT / "api" / "requirements.txt").read_text().splitlines()
             if ln.strip() and not ln.lstrip().startswith("#")]
-    shutil.copy2(ROOT / "api" / "requirements.txt", out / "requirements.txt")
     _write(out / "pyproject.toml", pyproject(reqs, fetch=bool(fetch_url)))
     _write(out / ".python-version", "3.12\n")
     _write(out / "vercel.json", json.dumps(vercel_config(region), indent=2) + NL)
+    _write(out / MARKER, "Created by scripts/build_vercel_bundle.py; rebuilt (deleted) on each run." + NL)
     return out
 
 
@@ -168,7 +198,7 @@ def main(argv: list[str] | None = None) -> int:
         total += model_bytes
         print(f"model (fetched during the Vercel build) = {model_bytes / 1e6:.1f} MB")
     if args.measure_deps:
-        deps = measure_deps(out / "requirements.txt")
+        deps = measure_deps(out)
         total += deps
         print(f"dependencies (py3.12 manylinux, installed) = {deps / 1e6:.1f} MB")
     print(f"total = {total / 1e6:.1f} MB of {LIMIT_MB} MB Vercel Python limit (uncompressed)")

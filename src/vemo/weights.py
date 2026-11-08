@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 
 #: metadata_props key listing the initializers stored as fp16 by ``store_fp16``.
-META_KEY = "vemo.fp16_initializers"
+META_KEY = "vemo.fp16_initializers"  # gitleaks:allow (ONNX metadata key, not a secret)
 
 
 def store_fp16(src: Path | str, dst: Path | str) -> dict:
@@ -56,19 +56,17 @@ def store_fp16(src: Path | str, dst: Path | str) -> dict:
     }
 
 
-def load_model_bytes(path: Path | str) -> bytes:
-    """Serialized model ready for ``onnxruntime.InferenceSession``.
+def upcast_fp16_initializers(model) -> bool:
+    """Upcast, in place, the initializers ``store_fp16`` recorded in an in-memory ModelProto.
 
-    An fp16-stored model has its recorded initializers upcast to float32; any
-    other model is returned unchanged, so the loader works for both files.
+    Returns False (and leaves the model untouched) when it is not fp16-stored.
     """
     import onnx
     from onnx import numpy_helper
 
-    model = onnx.load(str(path))
     names = next((json.loads(p.value) for p in model.metadata_props if p.key == META_KEY), None)
     if names is None:
-        return model.SerializeToString()
+        return False
 
     wanted = set(names)
     for init in model.graph.initializer:
@@ -84,7 +82,37 @@ def load_model_bytes(path: Path | str) -> bytes:
     kept = [p for p in model.metadata_props if p.key != META_KEY]
     del model.metadata_props[:]
     model.metadata_props.extend(kept)
+    return True
+
+
+def load_model_bytes(path: Path | str) -> bytes:
+    """Serialized model ready for ``onnxruntime.InferenceSession``.
+
+    An fp16-stored model has its recorded initializers upcast to float32; any
+    other model is returned unchanged, so the loader works for both files.
+    """
+    import onnx
+
+    model = onnx.load(str(path))
+    upcast_fp16_initializers(model)
     return model.SerializeToString()
+
+
+def load_model_bytes_from(data: bytes) -> bytes:
+    """``load_model_bytes`` for a model already read into memory (no second disk read).
+
+    A model that is not fp16-stored is returned as the same bytes object.
+    """
+    import onnx
+
+    model = onnx.load_from_string(data)
+    if not upcast_fp16_initializers(model):
+        return data
+    return model.SerializeToString()
+
+
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
 
 
 def sha256_file(path: Path | str, chunk: int = 1 << 20) -> str:

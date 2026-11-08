@@ -7,8 +7,9 @@ name: deploy-api
 # the deploy with a notice instead of failing.
 # Optional repository variables:
 #   LIVE_API_URL     production URL to health-check, e.g. https://<project>.vercel.app
-#                    (default: the deployment URL the CLI prints; that one may sit
-#                    behind Vercel Deployment Protection and answer 401)
+#                    (default: the production alias parsed from the deploy output,
+#                    else the per-deployment URL; a 401/403 from Deployment
+#                    Protection is reported as a warning, not a failure)
 #   ALLOWED_ORIGINS  comma-separated https origins of the site, passed to the function
 
 on:
@@ -20,6 +21,7 @@ on:
       - "models/head.json"
       - "scripts/build_vercel_bundle.py"
       - "scripts/vercel_fetch_model.py"
+      - "scripts/check_deployment.py"
       - ".github/workflows/deploy.yml"
   workflow_dispatch:
 
@@ -36,7 +38,22 @@ env:
   VERCEL_CLI_VERSION: 65.12.1
 
 jobs:
+  test:
+    # Never deploy a commit whose tests fail (tests.yml runs the same suite, but
+    # in parallel, so it cannot gate this workflow).
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+
   deploy:
+    needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -65,7 +82,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p release && cd release
+          mkdir -p release
+          cd release || exit 1
           gh release download "$MODEL_TAG" -R "$GITHUB_REPOSITORY" -p "$MODEL_FILE" -p SHA256SUMS
           sha256sum -c SHA256SUMS
           echo "MODEL_SHA256=$(awk -v f="$MODEL_FILE" '$2 == f || $2 == "*" f {print $1}' SHA256SUMS)" >> "$GITHUB_ENV"
@@ -117,9 +135,13 @@ jobs:
           ALLOWED_ORIGINS: ${{ vars.ALLOWED_ORIGINS }}
         run: |
           npm i -g "vercel@$VERCEL_CLI_VERSION"
-          url=$(vercel deploy --prod --yes --token "$VERCEL_TOKEN" \
-                  --env MODEL_SHA256="$MODEL_SHA256" \
-                  --env ALLOWED_ORIGINS="$ALLOWED_ORIGINS" | tail -n 1)
+          # stdout is the deployment URL; stderr (kept in the log) has "Aliased: <production URL>"
+          vercel deploy --prod --yes --token "$VERCEL_TOKEN" \
+            --env MODEL_SHA256="$MODEL_SHA256" \
+            --env ALLOWED_ORIGINS="$ALLOWED_ORIGINS" > ../vercel-deploy.out 2> ../vercel-deploy.log \
+            || { cat ../vercel-deploy.log; exit 1; }
+          cat ../vercel-deploy.log
+          url=$(tail -n 1 ../vercel-deploy.out)
           echo "deployed: $url"
           echo "url=$url" >> "$GITHUB_OUTPUT"
 
@@ -128,17 +150,8 @@ jobs:
         env:
           LIVE_API_URL: ${{ vars.LIVE_API_URL }}
           DEPLOY_URL: ${{ steps.deploy.outputs.url }}
+        # /health then /ready, up to ~2 min each. Fails on 5xx or timeout only;
+        # 401/403 (Deployment Protection) is a warning.
         run: |
-          base="${LIVE_API_URL:-$DEPLOY_URL}"
-          base="${base%/}"
-          case "$base" in https://*) ;; *) echo "::error::no https URL to check ($base)"; exit 1 ;; esac
-          for path in /health /ready; do
-            ok=
-            for i in $(seq 1 12); do  # up to ~2 min each: the first /ready loads the model
-              code=$(curl -s -o /tmp/body -w '%{http_code}' --max-time 60 "$base$path" || true)
-              echo "$path attempt $i: $code"
-              if [ "$code" = "200" ]; then ok=1; cat /tmp/body; echo; break; fi
-              sleep 10
-            done
-            if [ -z "$ok" ]; then echo "::error::$base$path did not return 200"; cat /tmp/body || true; exit 1; fi
-          done
+          python scripts/check_deployment.py --url "$LIVE_API_URL" \
+            --deploy-log vercel-deploy.log --deploy-url "$DEPLOY_URL"

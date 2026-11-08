@@ -5,14 +5,15 @@ float32 little-endian PCM, so the function needs no audio decoder: only NumPy,
 ONNX and ONNX Runtime (no librosa, scikit-learn, pandas or torch).
 
     POST /predict   body: 48,000 float32 LE samples (192,000 bytes),
-                    Content-Type: application/octet-stream
+                    Content-Type: application/octet-stream (required; 415 otherwise)
     GET  /health    liveness; never loads the model
     GET  /ready     200 once the model file and head are present and the session loads
 
 Configuration (environment):
     VEMO_MODEL_DIR     directory holding wavlm_pooled_fp16w.onnx and head.json
                        (default: ../models next to this file)
-    MODEL_SHA256       if set, the model file must hash to this or /ready is 503
+    MODEL_SHA256       if set, the model bytes must hash to this or /ready is 503; unset,
+                       no hash is computed and model_sha256 is null
     ALLOWED_ORIGINS    comma-separated exact origins allowed by CORS (https only,
                        except http://localhost / 127.0.0.1 for development); default none
     RATE_LIMIT_PER_MIN requests per client IP per minute on /predict and /ready (default 20)
@@ -45,7 +46,7 @@ if (ROOT / "src" / "vemo").is_dir() and str(ROOT / "src") not in sys.path:
 
 from vemo.head import head_proba, validate_head  # noqa: E402
 from vemo.trim import DURATION_S, SAMPLE_RATE, trim_waveform  # noqa: E402
-from vemo.weights import load_model_bytes, sha256_file  # noqa: E402
+from vemo.weights import load_model_bytes_from, sha256_bytes  # noqa: E402
 
 log = logging.getLogger("vemo.api")
 
@@ -69,19 +70,24 @@ class Loaded(NamedTuple):
     session: object
     input_name: str
     head: dict
-    sha256: str
+    #: sha256 of the model bytes, verified against MODEL_SHA256; None when no pin is set
+    #: (hashing is skipped then; production deploys always set the pin).
+    sha256: str | None
 
 
 class ModelUnavailable(Exception):
-    def __init__(self, missing: list[str], reason: str):
+    """The model cannot serve. ``permanent`` failures are cached until the files or pin change."""
+
+    def __init__(self, missing: list[str], reason: str, permanent: bool = True):
         super().__init__(reason)
-        self.missing, self.reason = missing, reason
+        self.missing, self.reason, self.permanent = missing, reason, permanent
 
 
 _lock = threading.Lock()
 #: One slot per warm instance: (key, Loaded | ModelUnavailable). The key holds the
-#: files' size and mtime and the pinned hash, so a failure is remembered (no
-#: re-hashing 190 MB on every /ready) until something actually changes.
+#: files' size and mtime and the pinned hash. Only permanent states are stored
+#: (loaded, file missing, sha mismatch, bad head); transient failures (I/O errors,
+#: session creation, out of memory) are retried by the next request.
 _cache: dict[str, tuple[tuple, object]] = {}
 
 
@@ -93,25 +99,49 @@ def _stat_key(path: Path):
     return (st.st_size, st.st_mtime_ns)
 
 
-def _load(onnx: Path, head_path: Path, expected: str) -> Loaded:
+def _read_bytes(path: Path) -> bytes:
+    return path.read_bytes()
+
+
+def _make_session(data: bytes):
+    """ONNX Runtime session from the model bytes (fp16-stored weights upcast in memory)."""
     import onnxruntime as ort
 
+    return ort.InferenceSession(load_model_bytes_from(data), providers=["CPUExecutionProvider"])
+
+
+def _load(onnx: Path, head_path: Path, expected: str) -> Loaded:
     missing = [name for name, p in (("model", onnx), ("head", head_path)) if not p.is_file()]
     if missing:
         raise ModelUnavailable(missing, f"missing: {', '.join(missing)}")
     try:
-        head = json.loads(head_path.read_text(encoding="utf-8"))
-        dim = validate_head(head)
-    except (ValueError, TypeError) as exc:
-        raise ModelUnavailable(["head"], f"head.json is invalid: {exc}") from None
-    digest = sha256_file(onnx)
-    if expected and digest != expected:
-        raise ModelUnavailable(["model"], "model sha256 does not match MODEL_SHA256")
+        head_text = _read_bytes(head_path).decode("utf-8")
+    except OSError as exc:
+        raise ModelUnavailable(["head"], f"head.json could not be read ({type(exc).__name__})", False) from None
+    except UnicodeDecodeError:
+        raise ModelUnavailable(["head"], "head.json is not UTF-8") from None
     try:
-        session = ort.InferenceSession(load_model_bytes(onnx), providers=["CPUExecutionProvider"])
-    except Exception as exc:  # onnx / onnxruntime raise many types
+        head = json.loads(head_text)
+        dim = validate_head(head)
+    except ValueError as exc:  # json.JSONDecodeError is a ValueError
+        raise ModelUnavailable(["head"], f"head.json is invalid: {exc}") from None
+    try:
+        data = _read_bytes(onnx)  # read once: hashed and parsed from the same bytes
+    except OSError as exc:
+        raise ModelUnavailable(["model"], f"model could not be read ({type(exc).__name__})", False) from None
+    digest = None
+    if expected:
+        digest = sha256_bytes(data)
+        if digest != expected:
+            raise ModelUnavailable(["model"], "model sha256 does not match MODEL_SHA256")
+    try:
+        session = _make_session(data)
+    except Exception as exc:  # MemoryError, onnx / onnxruntime errors: retried next request
         log.exception("model session failed to load")
-        raise ModelUnavailable(["session"], f"model session failed to load ({type(exc).__name__})") from None
+        raise ModelUnavailable(["session"], f"model session failed to load ({type(exc).__name__})",
+                               False) from None
+    finally:
+        del data
     out_dim = session.get_outputs()[0].shape[-1]
     if isinstance(out_dim, int) and out_dim != dim:
         raise ModelUnavailable(["head"], f"head expects {dim} features, model gives {out_dim}")
@@ -126,13 +156,17 @@ def get_model() -> Loaded:
     key = (str(directory), _stat_key(onnx), _stat_key(head_path), expected)
     with _lock:
         hit = _cache.get("model")
-        if hit is None or hit[0] != key:
+        if hit is not None and hit[0] == key:
+            value = hit[1]
+        else:
             try:
-                value: object = _load(onnx, head_path, expected)
+                value = _load(onnx, head_path, expected)
             except ModelUnavailable as exc:
+                if not exc.permanent:
+                    _cache.pop("model", None)
+                    raise
                 value = exc
             _cache["model"] = (key, value)
-        value = _cache["model"][1]
     if isinstance(value, ModelUnavailable):
         raise value
     return value
@@ -242,6 +276,9 @@ def _infer(wave: np.ndarray) -> dict:
     emb = m.session.run(None, {m.input_name: x[None]})[0]
     p = head_proba(m.head, np.asarray(emb, dtype=np.float64).reshape(1, -1))[0]
     ms = (time.perf_counter() - t) * 1000
+    if not np.all(np.isfinite(p)):
+        log.error("model produced non-finite probabilities")
+        raise ModelUnavailable(["session"], "model produced non-finite output", False)
     classes = m.head["classes"]
     order = np.argsort(-p, kind="stable")
     return {
@@ -309,7 +346,7 @@ def create_app() -> FastAPI:
         if (blocked := limited(request)) is not None:
             return blocked
         ctype = request.headers.get("content-type", "").split(";")[0].strip().lower()
-        if ctype and ctype != "application/octet-stream":
+        if ctype != "application/octet-stream":
             return _error(415, "Send Content-Type: application/octet-stream.")
         declared = request.headers.get("content-length")
         if declared is not None:

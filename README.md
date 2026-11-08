@@ -129,20 +129,23 @@ head. The function depends only on numpy, onnx, onnxruntime and fastapi
 | `POST /predict` | body: 48,000 float32 little-endian samples (192,000 bytes), `Content-Type: application/octet-stream` |
 | `GET /health` | liveness; never loads the model |
 | `GET /ready` | 200 once the model and head are present, the sha256 matches the pin, and the session loads; otherwise 503 naming the missing part |
-| Errors | 400 wrong length or NaN/Inf; 413 body over 256 KB; 415 other content types; 429 over 20 requests/min per IP (with `Retry-After`); 503 model unavailable |
+| Errors | 400 wrong length or NaN/Inf; 413 body over 256 KB; 415 unless `Content-Type` is exactly `application/octet-stream` (also when missing); 429 over 20 requests/min per IP (with `Retry-After`); 503 model unavailable (missing, sha256 mismatch, invalid head, or a transient load error that the next request retries) |
 | CORS | only the origins listed in `ALLOWED_ORIGINS` (exact https origins); none by default |
 
 ```bash
 # make a 3 s, 16 kHz mono float32 file from any clip (needs librosa locally, not on the server)
 python -c "import librosa, numpy as np; y,_ = librosa.load('clip.wav', sr=16000, mono=True); \
 y = np.pad(y[:48000], (0, max(0, 48000 - len(y)))); y.astype('<f4').tofile('clip.f32')"
-curl -s -X POST --data-binary @clip.f32 -H "Content-Type: application/octet-stream" <live URL>/predict
+curl -s -X POST --data-binary @clip.f32 -H 'Content-Type: application/octet-stream' '<live URL>/predict'
 ```
 
 ```json
 {"emotion": "angry", "probabilities": {"angry": 0.91, "...": "all 8, sorted, 4 dp"},
  "inference_ms": 110.0, "model_sha256": "ea666f45...", "note": "Trained on acted English speech (RAVDESS). Not for decisions about people."}
 ```
+
+`model_sha256` is the hash verified against the `MODEL_SHA256` pin (the deploy always
+sets it); without a pin the hash is not computed and the field is `null`.
 
 Trained on acted English speech (RAVDESS). Not for decisions about people: it has not
 been validated on spontaneous speech, other languages, or anyone's real emotional state.
@@ -155,9 +158,9 @@ but the served head was fitted on all 1,440 RAVDESS clips, so that is an end-to-
 check, not accuracy; the speaker-independent numbers are in [Results](#results).
 
 Deploys run from [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) on pushes
-to `main`: download `model-v1` and check `SHA256SUMS`, build the bundle with
+to `main`, only after the full test suite passes: download `model-v1` and check `SHA256SUMS`, build the bundle with
 [`scripts/build_vercel_bundle.py`](scripts/build_vercel_bundle.py), smoke-test it with
-the real model, deploy, then poll `/health` and `/ready`. Vercel's Hobby plan caps CLI
+the real model, deploy, then poll `/health` and `/ready` on the production alias ([`scripts/check_deployment.py`](scripts/check_deployment.py): fails unless both answer 200; only a Deployment Protection 401/403 is a warning). Vercel's Hobby plan caps CLI
 uploads at 100 MB, so the bundle (0.2 MB) carries a build step that downloads the 190 MB
 asset on Vercel and verifies its sha256; function size is 374 MB (model 190 MB plus
 dependencies 184 MB) against Vercel's 500 MB limit for Python functions.
