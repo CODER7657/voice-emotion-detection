@@ -133,6 +133,12 @@ def main() -> None:
     report["fp16w_vs_fp32"] = {"cosine_mean": round(float(per_clip.mean()), 6),
                                "cosine_min": round(float(per_clip.min()), 6),
                                "macro_f1_delta": round(f1["onnx_fp16w"] - f1["onnx_fp32"], 4)}
+    # Gate before anything the server would load is written: a failed fp16 copy must not be
+    # left in models/, where serve.onnx_path() would prefer it over the fp32 export.
+    gate = report["fp16w_vs_fp32"]
+    if gate["cosine_mean"] < MIN_COSINE or abs(gate["macro_f1_delta"]) > MAX_F1_DROP:
+        fp16w.unlink(missing_ok=True)
+        raise SystemExit(f"fp16 storage gate failed, {fp16w.name} removed: {gate}")
 
     # The served head: fitted on all clips, using the embeddings the served (fp16-stored) model gives.
     pipe = make_linear(c=0.5).fit(X["onnx_fp16w"], y)
@@ -142,8 +148,9 @@ def main() -> None:
 
     # Per-clip embeddings for the CI evaluation gate (roadmap voice #3): fp16, ~2 MB,
     # derived from RAVDESS (CC BY-NC-SA 4.0), so a NOTICE travels with them.
-    np.savez_compressed(out / EMBEDDINGS_FILE, X=X["onnx_fp16w"].astype(np.float16), emotion=y,
-                        actor=manifest["actor"].to_numpy(), clip=np.array([Path(p).name for p in manifest["path"]]))
+    # Plain string arrays, never object arrays: those need allow_pickle to load.
+    np.savez_compressed(out / EMBEDDINGS_FILE, X=X["onnx_fp16w"].astype(np.float16), emotion=y.astype(str),
+                        actor=manifest["actor"].to_numpy(), files=np.array([Path(p).name for p in manifest["path"]]))
 
     module_cpu = module.to("cpu")
     x = waves[:1]
@@ -156,9 +163,6 @@ def main() -> None:
     print("<<<EXPORT_REPORT>>>")
     print(json.dumps(report, separators=(",", ":")))
     print("<<<END_EXPORT_REPORT>>>")
-    gate = report["fp16w_vs_fp32"]
-    if gate["cosine_mean"] < MIN_COSINE or abs(gate["macro_f1_delta"]) > MAX_F1_DROP:
-        raise SystemExit(f"fp16 storage gate failed: {gate}")
 
 
 if __name__ == "__main__":

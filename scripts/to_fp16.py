@@ -6,7 +6,7 @@
 Halves the file (378 MB -> 190 MB) for the GitHub Release and the deploy bundle.
 ``vemo.serve.Model`` upcasts the weights back to fp32 in memory before building the
 session (``vemo.weights.load_model_bytes``), so the only change from the fp32 model is
-the rounding of the weights. Writes ``SHA256SUMS`` next to the output for the release.
+the rounding of the weights. Writes ``SHA256SUMS.fp16w`` next to the output for the release.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from vemo.serve import ONNX_FILE, ONNX_FP32_FILE  # noqa: E402
-from vemo.weights import sha256_file, store_fp16  # noqa: E402
+from vemo.weights import sha256_file, store_fp16, verify_sha256  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -29,9 +29,10 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     if args.expect_src_sha256:
-        actual = sha256_file(args.src)
-        if actual != args.expect_src_sha256.strip().lower():
-            print(f"{args.src}: sha256 {actual} does not match the expected value", file=sys.stderr)
+        try:
+            verify_sha256(args.src, args.expect_src_sha256)
+        except ValueError as err:
+            print(err, file=sys.stderr)
             return 1
 
     report = store_fp16(args.src, args.dst)
