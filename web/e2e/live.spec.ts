@@ -13,6 +13,11 @@ const EMOTION = /^(angry|calm|disgust|fearful|happy|neutral|sad|surprised)$/;
 
 test("a file goes through the live model", async ({ page }) => {
   await page.goto("/");
+  // Playwright's Windows WebKit build ships without Web Audio (Linux WebKit and iOS have it).
+  test.skip(
+    !(await page.evaluate(() => typeof OfflineAudioContext === "function")),
+    "this engine build has no Web Audio",
+  );
   await page.locator("#file").setInputFiles(clip);
   await expect(page.locator("#verdict")).toHaveText(EMOTION, { timeout: 45_000 });
   await expect(page.locator(".bar")).toHaveCount(8);
