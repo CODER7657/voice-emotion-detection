@@ -197,3 +197,27 @@ def test_to_fp16_script_refuses_an_unexpected_input(tmp_path):
     dst = tmp_path / "fp16w.onnx"
     assert _to_fp16_main()(["--src", str(src), "--dst", str(dst), "--expect-src-sha256", "0" * 64]) == 1
     assert not dst.exists()
+
+
+def test_in_memory_loader_matches_the_path_loader(models):
+    fp32, fp16, _ = models
+    assert weights.load_model_bytes_from(fp16.read_bytes()) == weights.load_model_bytes(fp16)
+    x = np.random.default_rng(2).normal(size=(1, 256)).astype(np.float32)
+    np.testing.assert_array_equal(_run(weights.load_model_bytes_from(fp16.read_bytes()), x),
+                                  _run(weights.load_model_bytes(fp16), x))
+
+
+def test_in_memory_loader_returns_plain_model_bytes_unchanged(models):
+    fp32, _, _ = models
+    data = fp32.read_bytes()
+    assert weights.load_model_bytes_from(data) is data
+
+
+def test_in_memory_loader_rejects_garbage():
+    with pytest.raises(Exception):
+        weights.load_model_bytes_from(b"not a model")
+
+
+def test_sha256_bytes_matches_file_hash(models, tmp_path):
+    _, fp16, _ = models
+    assert weights.sha256_bytes(fp16.read_bytes()) == weights.sha256_file(fp16)

@@ -22,6 +22,8 @@ from pathlib import Path
 
 import numpy as np
 
+from vemo.head import head_proba  # noqa: F401  (re-exported; the API imports vemo.head)
+
 MODEL_DIR = Path(os.getenv("VEMO_MODEL_DIR", Path(__file__).resolve().parents[2] / "models"))
 ONNX_FILE = "wavlm_pooled_fp16w.onnx"
 #: The fp32 export, still accepted so a local models/ from before fp16 storage works.
@@ -35,15 +37,6 @@ def head_from_pipeline(pipeline) -> dict:
     scaler, lr = pipeline.steps[0][1], pipeline.steps[-1][1]
     return {"classes": [str(c) for c in lr.classes_], "mean": scaler.mean_.tolist(),
             "scale": scaler.scale_.tolist(), "coef": lr.coef_.tolist(), "intercept": lr.intercept_.tolist()}
-
-
-def head_proba(head: dict, X: np.ndarray) -> np.ndarray:
-    """Class probabilities, matching ``pipeline.predict_proba`` for multinomial regression."""
-    z = (X - np.asarray(head["mean"])) / np.asarray(head["scale"])
-    logits = z @ np.asarray(head["coef"]).T + np.asarray(head["intercept"])
-    logits -= logits.max(axis=1, keepdims=True)
-    p = np.exp(logits)
-    return p / p.sum(axis=1, keepdims=True)
 
 
 def onnx_path(model_dir: Path = MODEL_DIR) -> Path:
@@ -82,8 +75,6 @@ def model() -> Model:
 def create_app():
     from fastapi import FastAPI, File, HTTPException, UploadFile
 
-    from vemo.features import load_trimmed
-
     app = FastAPI(title="Speech emotion (RAVDESS-trained, research use)")
 
     @app.get("/health")
@@ -96,6 +87,8 @@ def create_app():
         data = await file.read()
         if not data or len(data) > MAX_BYTES:
             raise HTTPException(413 if data else 400, "Send one audio clip under 10 MB.")
+        from vemo.features import load_trimmed  # librosa, imported only when a clip arrives
+
         suffix = Path(file.filename or "clip.wav").suffix or ".wav"
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
             f.write(data)

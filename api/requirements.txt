@@ -1,0 +1,6 @@
+# Runtime dependencies of the Vercel function (api/index.py), and nothing else.
+# Exact pins with CPython 3.12 manylinux x86_64 wheels; no librosa, sklearn, pandas or torch.
+fastapi==0.162.0
+numpy==2.5.4
+onnx==1.23.2
+onnxruntime==1.31.1

@@ -22,7 +22,11 @@ cnn = ["tensorflow>=2.15"]
 ssl = ["torch>=2.1", "transformers>=4.40"]
 serve = ["onnx>=1.15", "onnxruntime>=1.17", "fastapi>=0.110", "uvicorn>=0.29", "python-multipart>=0.0.9"]
 export = ["torch>=2.1", "transformers>=4.40", "onnx>=1.15", "onnxruntime>=1.17"]
-dev = ["pytest>=8", "fastapi>=0.110", "httpx>=0.27", "python-multipart>=0.0.9", "onnx>=1.15", "onnxruntime>=1.17"]
+dev = [
+  "pytest>=8", "fastapi>=0.110", "httpx>=0.27", "python-multipart>=0.0.9", "onnx>=1.15", "onnxruntime>=1.17",
+  # contract fuzzing of api/index.py (tests/test_api_contract.py); pinned, needs pytest>=8.4
+  "schemathesis==4.33.1; python_version >= '3.11'", "hypothesis==6.170.15; python_version >= '3.11'",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
