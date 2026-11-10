@@ -92,8 +92,18 @@ def test_prediction_matches_trim_session_head_by_hand(client, api_env, standin_m
         assert got[name] == pytest.approx(round(float(p[i]), 4), abs=1e-4)
 
 
-def test_silence_is_accepted(client):
-    assert post(client, bytes(N * 4)).status_code == 200
+def test_silence_is_refused_not_given_an_emotion(client):
+    for quiet in (bytes(N * 4), (np.full(N, 5e-4, dtype="<f4")).tobytes()):
+        r = post(client, quiet)
+        assert r.status_code == 400
+        assert "No speech" in r.json()["detail"]
+        assert "emotion" not in r.json()
+
+
+def test_quiet_speech_just_above_the_floor_is_scored(client):
+    wave = np.frombuffer(pcm(), dtype="<f4")
+    quiet = (wave / np.max(np.abs(wave)) * 2e-3).astype("<f4").tobytes()
+    assert post(client, quiet).status_code == 200
 
 
 def test_content_type_with_parameters_is_accepted(client):

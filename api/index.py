@@ -290,6 +290,9 @@ def _infer(wave: np.ndarray) -> dict:
     }
 
 
+SILENCE_PEAK = 1e-3  # same floor as the web client
+
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title="Speech emotion API (RAVDESS-trained, research use)",
@@ -366,6 +369,11 @@ def create_app() -> FastAPI:
         wave = np.frombuffer(bytes(body), dtype="<f4").astype(np.float32)  # native, writable
         if not np.all(np.isfinite(wave)):
             return _error(400, "Audio contains NaN or infinity.")
+        # The model always names an emotion, silence included ("sad", probability 1.0). The web
+        # page refuses silence before sending (isSilent in web/src/audio.ts); other callers get
+        # the same answer here. The trim is relative to the loudest frame, so a floor is needed.
+        if float(np.max(np.abs(wave))) < SILENCE_PEAK:
+            return _error(400, "No speech in the audio: it is silent or too quiet.")
         try:
             # Loading (first request) and inference are CPU-bound: keep them off the event loop.
             return await run_in_threadpool(_infer, wave)
