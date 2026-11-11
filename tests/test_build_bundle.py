@@ -61,7 +61,7 @@ def test_bundle_app_serves_from_its_own_files(tmp_path, standin):
         "from fastapi.testclient import TestClient\n"
         "c = TestClient(m.app)\n"
         "assert c.get('/ready').status_code == 200, c.get('/ready').text\n"
-        "r = c.post('/predict', content=np.full(48000, 0.1, '<f4').tobytes(),"
+        "r = c.post('/predict', content=(0.1 * sum(np.sin(2 * np.pi * 150 * k * np.arange(48000) / 16000) / k for k in range(1, 6))).astype('<f4').tobytes(),"
         " headers={'Content-Type': 'application/octet-stream'})\n"
         "assert r.status_code == 200, r.text\n"
         "print('ok')\n"

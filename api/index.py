@@ -291,6 +291,26 @@ def _infer(wave: np.ndarray) -> dict:
 
 
 SILENCE_PEAK = 1e-3  # same floor as the web client
+TONE_BAND_HZ = 30.0  # half-width of the band around the strongest frequency
+TONE_FRACTION = 0.9  # more of the energy than this in that one band is a tone, not a voice
+
+
+def tone_fraction(wave: np.ndarray) -> float:
+    """Share of the signal's energy within TONE_BAND_HZ of its strongest frequency.
+
+    A voice spreads its energy over harmonics and noise, so even a held vowel stays well
+    under 0.9. A test tone, a hum or a whistle sits near 1.0, and so does a constant (DC)
+    signal, which has no energy at all once its mean is removed.
+    """
+    x = wave.astype(np.float64)
+    x -= x.mean()
+    power = np.abs(np.fft.rfft(x)) ** 2
+    total = float(power.sum())
+    if total <= 1e-12:
+        return 1.0
+    peak = int(np.argmax(power))
+    half = max(1, round(TONE_BAND_HZ * len(x) / SAMPLE_RATE))
+    return float(power[max(0, peak - half) : peak + half + 1].sum()) / total
 
 
 def create_app() -> FastAPI:
@@ -374,6 +394,9 @@ def create_app() -> FastAPI:
         # the same answer here. The trim is relative to the loudest frame, so a floor is needed.
         if float(np.max(np.abs(wave))) < SILENCE_PEAK:
             return _error(400, "No speech in the audio: it is silent or too quiet.")
+        # A steady tone is not speech either, and the model would still name an emotion for it.
+        if tone_fraction(wave) > TONE_FRACTION:
+            return _error(400, "No speech in the audio: it is a single steady tone.")
         try:
             # Loading (first request) and inference are CPU-bound: keep them off the event loop.
             return await run_in_threadpool(_infer, wave)

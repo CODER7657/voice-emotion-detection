@@ -149,7 +149,8 @@ jobs:
           c = TestClient(m.app)
           r = c.get("/ready"); print(r.status_code, r.text); assert r.status_code == 200
           t = np.arange(48000) / 16000
-          wave = (0.3 * np.sin(2 * np.pi * 220 * t)).astype("<f4").tobytes()
+          # Voice-like (five harmonics): a single sine is refused as a tone.
+          wave = (0.15 * sum(np.sin(2 * np.pi * 220 * k * t) / k for k in range(1, 6))).astype("<f4").tobytes()
           r = c.post("/predict", content=wave, headers={"Content-Type": "application/octet-stream"})
           print(r.status_code, r.text); assert r.status_code == 200
           PY

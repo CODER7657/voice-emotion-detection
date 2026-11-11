@@ -165,7 +165,7 @@ head. The function depends only on numpy, onnx, onnxruntime and fastapi
 | `POST /predict` | body: 48,000 float32 little-endian samples (192,000 bytes), `Content-Type: application/octet-stream` |
 | `GET /health` | liveness; never loads the model |
 | `GET /ready` | 200 once the model and head are present, the sha256 matches the pin, and the session loads; otherwise 503 naming the missing part |
-| Errors | 400 wrong length or NaN/Inf; 413 body over 256 KB; 415 unless `Content-Type` is exactly `application/octet-stream` (also when missing); 429 over 20 requests/min per IP (with `Retry-After`); 503 model unavailable (missing, sha256 mismatch, invalid head, or a transient load error that the next request retries) |
+| Errors | 400 wrong length, NaN/Inf, silence or a single steady tone; 413 body over 256 KB; 415 unless `Content-Type` is exactly `application/octet-stream` (also when missing); 429 over 20 requests/min per IP (with `Retry-After`); 503 model unavailable (missing, sha256 mismatch, invalid head, or a transient load error that the next request retries) |
 | CORS | only the origins listed in `ALLOWED_ORIGINS` (exact https origins); none by default |
 
 ```bash
