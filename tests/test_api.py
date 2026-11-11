@@ -26,7 +26,10 @@ ROOT = Path(__file__).resolve().parents[1]
 def pcm(n: int = N, seed: int = 0) -> bytes:
     t = np.arange(n) / 16_000
     g = np.random.default_rng(seed)
-    y = 0.3 * np.sin(2 * np.pi * 220 * t) * (t > 0.4) + 0.01 * g.normal(size=n)
+    # Voice-like: five harmonics of 220 Hz after a short silence, plus a little noise. A
+    # single sine would be refused as a tone.
+    voiced = sum(np.sin(2 * np.pi * 220 * k * t) / k for k in range(1, 6))
+    y = 0.15 * voiced * (t > 0.4) + 0.01 * g.normal(size=n)
     return y.astype("<f4").tobytes()
 
 
@@ -98,6 +101,42 @@ def test_silence_is_refused_not_given_an_emotion(client):
         assert r.status_code == 400
         assert "No speech" in r.json()["detail"]
         assert "emotion" not in r.json()
+
+
+def test_a_steady_tone_is_refused_not_given_an_emotion(client):
+    t = np.arange(N) / 16_000
+    tones = {
+        "220 Hz sine": 0.3 * np.sin(2 * np.pi * 220 * t),
+        "1 kHz sine": 0.05 * np.sin(2 * np.pi * 1000 * t),
+        "sine with hiss": 0.3 * np.sin(2 * np.pi * 440 * t) + 0.005 * np.random.default_rng(1).normal(size=N),
+        "sine after a pause": 0.3 * np.sin(2 * np.pi * 220 * t) * (t > 1.0),
+        "constant level": np.full(N, 0.1),
+    }
+    for name, wave in tones.items():
+        r = post(client, wave.astype("<f4").tobytes())
+        assert r.status_code == 400, name
+        assert "steady tone" in r.json()["detail"], name
+        assert "emotion" not in r.json(), name
+
+
+def test_voice_like_and_noisy_audio_is_not_mistaken_for_a_tone(client, api_env):
+    t = np.arange(N) / 16_000
+    g = np.random.default_rng(2)
+    glide = 2 * np.pi * np.cumsum(140 + 50 * np.sin(2 * np.pi * 0.7 * t)) / 16_000
+    sounds = {
+        "held vowel, five harmonics": 0.15 * sum(np.sin(2 * np.pi * 150 * k * t) / k for k in range(1, 6)),
+        "gliding pitch": 0.2 * sum(np.sin(k * glide) / k for k in range(1, 12)),
+        "white noise": 0.1 * g.normal(size=N),
+        "two notes": 0.2 * np.sin(2 * np.pi * 220 * t) + 0.2 * np.sin(2 * np.pi * 330 * t),
+    }
+    for name, wave in sounds.items():
+        assert api_env.tone_fraction(wave.astype(np.float32)) < api_env.TONE_FRACTION, name
+        assert post(client, wave.astype("<f4").tobytes()).status_code == 200, name
+
+
+def test_tone_fraction_is_one_for_a_signal_with_no_energy(api_env):
+    assert api_env.tone_fraction(np.zeros(N, np.float32)) == 1.0
+    assert api_env.tone_fraction(np.full(N, 0.25, np.float32)) == 1.0
 
 
 def test_quiet_speech_just_above_the_floor_is_scored(client):
